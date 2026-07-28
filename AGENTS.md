@@ -143,11 +143,20 @@ through `Vault`, the method belongs in core, not in the front-end.
 The interactive browser repeats the pattern:
 
 ```
-ui/state.ts    pure reducer: (state, key) -> { state, effect }. No I/O at all.
-ui/layout.ts   pure rendering: state -> string[]. No I/O at all.
-ui/screen.ts   the only file that touches the TTY.
-ui/browser.ts  the shell: runs the loop, executes effects against the vault.
+ui/key.ts           the keyboard vocabulary. Node's events translated once.
+ui/keyboard.ts      raw mode and listener cleanup, shared by every surface.
+ui/text.ts          width-safe row building, shared by every surface.
+ui/state.ts         pure reducer: (state, key) -> { state, effect }. No I/O.
+ui/layout.ts        pure rendering: state -> string[]. No I/O.
+ui/screen.ts        alt screen + whole-frame drawing, for full-screen views.
+ui/browser.ts       the shell: runs the loop, executes effects against the vault.
+ui/select-state.ts  pure reducer for picking one thing from a list.
+ui/select.ts        the inline picker: renders below the cursor, collapses when done.
 ```
+
+Full-screen views (the browser) own the alternate screen. Prompts (`select`)
+render inline and leave the scrollback intact — a picker should not erase the
+terminal you were reading a second ago. Both share `Keyboard` and `text.ts`.
 
 This is why cursor maths, the view stack, filtering, and the confirm flow are
 covered by ordinary unit tests with no pseudo-terminal involved. **Any new
@@ -340,6 +349,13 @@ markdown" has to mean.
 **L9. A flag name can only mean one thing.** `--vault <dir>` (global) collided with
 `config set --vault` (scope), and the global hoister silently ate it. The scope flag
 became `--local`.
+
+**L10. Piped answers to sequential prompts get dropped.** readline emits every
+line the moment a pipe delivers them; a line nobody is awaiting at that instant
+is gone. Creating a fresh interface per question made it worse — closing one ends
+the stream, so the second question never resolved and the process died with an
+unsettled promise. One shared reader that queues lines fixes both, and makes
+`ppr ai setup < answers.txt` work.
 
 ---
 

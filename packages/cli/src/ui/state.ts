@@ -1,5 +1,6 @@
 import type { Entry } from '@ppr/core';
 import { plainText } from '@ppr/core';
+import type { Key } from './key.js';
 
 /**
  * The browser as a pure state machine.
@@ -41,6 +42,8 @@ export interface BrowserState {
   done: boolean;
 }
 
+export type { Key };
+
 /** Something the shell must do: touch the filesystem, spawn an editor, exit. */
 export type Effect =
   | { type: 'none' }
@@ -53,15 +56,6 @@ export type Effect =
   | { type: 'quit' };
 
 const NONE: Effect = { type: 'none' };
-
-export interface Key {
-  name: string;
-  ctrl?: boolean;
-  shift?: boolean;
-  meta?: boolean;
-  /** The literal character, when it is one. */
-  char?: string;
-}
 
 export function createState(label: string, entries: Entry[], pageSize = 20): BrowserState {
   return {

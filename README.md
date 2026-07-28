@@ -151,10 +151,17 @@ fragment.
 ## AI, on your terms
 
 ```bash
-ppr ai setup     # interactive
+ppr ai setup     # pick a backend, keyboard or typed
 ppr ai test      # one prompt, end to end
 ppr ai status
+ppr ai list      # every backend, model and transcription
 ```
+
+The picker takes whichever input you reach for: arrows to move, or type to
+filter, or type the number — Enter takes whatever is highlighted either way. It
+collapses to a single line once you choose, so your scrollback keeps a record.
+With no terminal it prints the numbered list and reads one line per question, so
+`printf 'ollama\nqwen3\n\n' | ppr ai setup` configures a machine unattended.
 
 | Provider | Key needed | Runs where |
 | --- | --- | --- |

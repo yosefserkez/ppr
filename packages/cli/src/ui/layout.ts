@@ -2,62 +2,17 @@ import type { Entry } from '@ppr/core';
 import { formatDay, formatTime, plainText, relativeAge, shortId, truncate } from '@ppr/core';
 import { color } from '../render.js';
 import { currentView, focused, visibleEntries, type BrowserState } from './state.js';
+import { plain, row, wrap, type Segment, type Style } from './text.js';
 import type { Size } from './screen.js';
 
 /**
- * Frame composition.
- *
- * Lines are built from styled *segments* rather than pre-coloured strings, so
- * width is always measured on the visible text. Truncating a string that already
- * contains escape codes is how terminal UIs end up with stuck colours.
+ * Frame composition for the full-screen browser. Pure: state in, lines out.
+ * Width-safe row building is shared with the inline prompts — see `ui/text.ts`.
  */
-type Style = (s: string) => string;
-type Segment = [text: string, style?: Style];
-
 const PREVIEW_MIN = 40;
 const SIDE_BY_SIDE_AT = 96;
 /** The list gets the larger share: titles are what you scan. */
 const LIST_SHARE = 0.55;
-
-function row(segments: Segment[], width: number): string {
-  let used = 0;
-  let out = '';
-  for (const [text, style] of segments) {
-    if (used >= width) break;
-    const clipped = text.length > width - used ? text.slice(0, width - used) : text;
-    out += style ? style(clipped) : clipped;
-    used += clipped.length;
-  }
-  return out + ' '.repeat(Math.max(0, width - used));
-}
-
-const plain = (text: string, width: number): string => row([[text]], width);
-
-/** Word-wraps to a width, preserving blank lines between paragraphs. */
-function wrap(text: string, width: number): string[] {
-  const out: string[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) {
-      out.push('');
-      continue;
-    }
-    let current = '';
-    for (const word of line.split(/\s+/)) {
-      if (!current) current = word;
-      else if (current.length + 1 + word.length <= width) current += ` ${word}`;
-      else {
-        out.push(current);
-        current = word;
-      }
-      while (current.length > width) {
-        out.push(current.slice(0, width));
-        current = current.slice(width);
-      }
-    }
-    if (current) out.push(current);
-  }
-  return out;
-}
 
 const KIND_STYLE: Record<string, Style> = {
   log: color.green,

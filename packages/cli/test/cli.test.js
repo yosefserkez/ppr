@@ -266,3 +266,44 @@ test('edit reports when nothing changed', async () => {
     assert.match(stdout, /No changes/);
   });
 });
+
+test('setup answers can be piped, one line per question', async () => {
+  await withVault(async (dir) => {
+    // Sequential prompts over a pipe used to drop every answer after the first:
+    // readline emits all lines at once and anything not being awaited was lost.
+    const { code, stderr } = await ppr(dir, ['ai', 'setup'], { input: 'ollama\nqwen3\n\n' });
+    assert.equal(code, 0, stderr);
+
+    const config = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.equal(config.ai.provider, 'ollama');
+    assert.equal(config.ai.model, 'qwen3');
+
+    const { stdout } = await ppr(dir, ['ai', 'status', '--json']);
+    assert.equal(JSON.parse(stdout).ai.provider, 'ollama');
+  });
+});
+
+test('setup accepts a number as readily as a name', async () => {
+  await withVault(async (dir) => {
+    const { code } = await ppr(dir, ['ai', 'setup'], { input: '3\nllama3.2\n\n' });
+    assert.equal(code, 0);
+    const config = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.equal(config.ai.provider, 'ollama', 'option 3 is ollama');
+  });
+});
+
+test('setup refuses an answer that is not an option', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['ai', 'setup'], { input: 'notathing\n' });
+    assert.equal(code, 2);
+    assert.match(stderr, /Not one of the options/);
+  });
+});
+
+test('running out of answers is an error, not a hang', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['ai', 'setup'], { input: 'anthropic\n' });
+    assert.equal(code, 2);
+    assert.match(stderr, /No input left to answer/);
+  });
+});

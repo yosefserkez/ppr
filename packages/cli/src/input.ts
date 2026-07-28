@@ -3,7 +3,7 @@ import { fstatSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline/promises';
+import { createInterface, type Interface } from 'node:readline/promises';
 import { PprError } from '@ppr/core';
 
 /**
@@ -99,13 +99,79 @@ export async function promptMultiline(prompt: string): Promise<string> {
   return lines.join('\n').trim();
 }
 
+/**
+ * One readline for the whole process.
+ *
+ * Creating a fresh interface per question ends the stream on close, so a second
+ * question over a pipe never resolved and the process died with an unsettled
+ * promise — `ppr ai setup < answers.txt` was simply broken. Sharing one
+ * interface keeps sequential prompts working whether input is typed or piped.
+ */
+interface LineReader {
+  next(question: string): Promise<string>;
+  close(): void;
+}
+
+let reader: LineReader | undefined;
+
+function lineReader(): LineReader {
+  if (reader) return reader;
+
+  const rl: Interface = createInterface({ input: process.stdin, output: process.stderr });
+  // Piped input arrives all at once: readline emits every line immediately, and
+  // a line nobody happened to be awaiting is gone. So lines are queued here and
+  // handed out as questions ask for them.
+  const buffered: string[] = [];
+  const waiting: Array<(line: string | null) => void> = [];
+  let ended = false;
+
+  rl.on('line', (line: string) => {
+    const next = waiting.shift();
+    if (next) next(line);
+    else buffered.push(line);
+  });
+  rl.once('close', () => {
+    ended = true;
+    while (waiting.length) waiting.shift()!(null);
+  });
+
+  const exhausted = (question: string) =>
+    new PprError('EINVALID', `No input left to answer: ${question.trim()}`);
+
+  reader = {
+    async next(question: string): Promise<string> {
+      process.stderr.write(question);
+
+      // A terminal echoes what the user types; a pipe does not, so echo it here
+      // and a scripted run reads back like a typed one.
+      const echo = (line: string) => {
+        if (!process.stdin.isTTY) process.stderr.write(`${line}\n`);
+        return line;
+      };
+
+      const ready = buffered.shift();
+      if (ready !== undefined) return echo(ready);
+      if (ended) throw exhausted(question);
+
+      const line = await new Promise<string | null>((settle) => waiting.push(settle));
+      if (line === null) throw exhausted(question);
+      return echo(line);
+    },
+    close() {
+      rl.close();
+      reader = undefined;
+    },
+  };
+  return reader;
+}
+
 export async function promptLine(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    return (await rl.question(question)).trim();
-  } finally {
-    rl.close();
-  }
+  return (await lineReader().next(question)).trim();
+}
+
+/** Releases stdin so the process can exit. Safe to call more than once. */
+export function closePrompts(): void {
+  reader?.close();
 }
 
 export async function confirm(question: string, defaultYes = false): Promise<boolean> {

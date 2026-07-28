@@ -27,6 +27,7 @@ import {
 import { join } from 'node:path';
 import { globals, withVault } from '../context.js';
 import { confirm, promptLine } from '../input.js';
+import { select } from '../ui/select.js';
 import { color, json, out, errline, table } from '../render.js';
 
 /** `ppr init` — the only command that runs without a vault. */
@@ -153,6 +154,17 @@ const PROVIDER_HELP: Record<string, string> = {
   command: 'any command that reads a prompt on stdin',
 };
 
+const TRANSCRIBE_HELP: Record<string, string> = {
+  none: 'no voice capture',
+  'whisper-cpp': 'local whisper.cpp binary (no key)',
+  openai: 'OpenAI transcription API',
+  command: 'any command that takes {file} and prints text',
+};
+
+/** Local-first ordering: the options that need no account come first. */
+const asChoices = (help: Record<string, string>) =>
+  Object.entries(help).map(([value, hint]) => ({ value, label: value, hint }));
+
 export function aiCommand(): Command {
   const cmd = new Command('ai').description('configure and test the model backend');
 
@@ -185,38 +197,64 @@ export function aiCommand(): Command {
     .command('list')
     .description('list available providers')
     .action(async (_flags: unknown, self: Command) => {
-      if (globals(self).json) return json(PROVIDER_HELP);
-      out(table(Object.entries(PROVIDER_HELP).map(([k, v]) => [color.cyan(k), v])));
+      if (globals(self).json) return json({ ai: PROVIDER_HELP, transcribe: TRANSCRIBE_HELP });
+      out(color.bold('Model backends'));
+      out(table(Object.entries(PROVIDER_HELP).map(([k, v]) => [`  ${color.cyan(k)}`, v])));
+      out(`\n${color.bold('Transcription')}`);
+      out(table(Object.entries(TRANSCRIBE_HELP).map(([k, v]) => [`  ${color.cyan(k)}`, v])));
     });
 
   cmd
     .command('setup')
     .description('interactive setup')
     .action(async (_flags: unknown, self: Command) => {
-      const providers = Object.keys(PROVIDER_HELP);
-      out(color.bold('Pick a model backend\n'));
-      out(table(providers.map((p, i) => [`  ${i + 1}. ${color.cyan(p)}`, PROVIDER_HELP[p]!])));
-      const answer = await promptLine('\nNumber or name: ');
-      const picked = /^\d+$/.test(answer) ? providers[Number(answer) - 1] : answer.trim();
-      if (!picked || !providers.includes(picked)) throw new PprError('EINVALID', `Unknown provider: ${answer}`);
+      const picked = await select({
+        title: 'Model backend',
+        choices: asChoices(PROVIDER_HELP),
+      });
+      const provider = picked.value;
+      const defaults = PROVIDER_DEFAULTS[provider as keyof typeof PROVIDER_DEFAULTS] ?? {};
 
-      const defaults = PROVIDER_DEFAULTS[picked as keyof typeof PROVIDER_DEFAULTS] ?? {};
       const layerPath = globalConfigPath();
       const layer = await readConfigLayer(layerPath);
-      const ai: Record<string, unknown> = { ...(layer.ai as Record<string, unknown>), provider: picked };
+      const ai: Record<string, unknown> = { ...(layer.ai as Record<string, unknown>), provider };
 
-      const model = await promptLine(`Model [${defaults.model ?? 'none'}]: `);
-      ai.model = model || defaults.model || '';
-      if (picked === 'openai' || picked === 'ollama') {
+      if (provider !== 'none') {
+        const model = await promptLine(`Model [${defaults.model ?? 'none'}]: `);
+        ai.model = model || defaults.model || '';
+      }
+      if (provider === 'openai' || provider === 'ollama') {
         const url = await promptLine(`Endpoint [${defaults.baseUrl ?? ''}]: `);
         if (url) ai.baseUrl = url;
       }
-      if (picked === 'command') {
+      if (provider === 'command') {
         const command = await promptLine('Command (prompt arrives on stdin): ');
         if (!command) throw new PprError('EINVALID', 'A command is required');
         ai.command = command;
       }
-      await writeConfigLayer(layerPath, { ...layer, ai });
+
+      const transcribe = { ...(layer.transcribe as Record<string, unknown>) };
+      // Voice is the one thing `doctor` used to nag about with no way to set it here.
+      if (await confirm('Set up voice capture too?', false)) {
+        const backend = await select({
+          title: 'Transcription',
+          choices: asChoices(TRANSCRIBE_HELP),
+        });
+        transcribe.provider = backend.value;
+        if (backend.value === 'whisper-cpp') {
+          const model = await promptLine('Path to a whisper model (.bin): ');
+          if (model) transcribe.model = model;
+        }
+        if (backend.value === 'command') {
+          const command = await promptLine('Command ({file} is the audio path): ');
+          if (command) transcribe.command = command;
+        }
+      }
+
+      // Only record a transcribe section if there is something in it.
+      const next: Record<string, unknown> = { ...layer, ai };
+      if (Object.keys(transcribe).length) next.transcribe = transcribe;
+      await writeConfigLayer(layerPath, next);
 
       if (defaults.apiKeyEnv) {
         const existing = (await loadSecrets())(defaults.apiKeyEnv);
@@ -228,8 +266,10 @@ export function aiCommand(): Command {
           }
         }
       }
-      out(`\n${color.green('✓')} configured ${color.bold(picked)}  ${color.dim(layerPath)}`);
-      out(color.dim('Test it: ppr ai test'));
+
+      out(`\n${color.green('✓')} configured ${color.bold(provider)}  ${color.dim(layerPath)}`);
+      if (provider !== 'none') out(color.dim('Test it: ppr ai test'));
+      void globals(self);
     });
 
   cmd

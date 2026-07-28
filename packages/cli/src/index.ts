@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import { PprError, VERSION } from '@ppr/core';
 import { globals, hoistGlobals, withVault } from './context.js';
-import { hasStdin, resolveText } from './input.js';
+import { closePrompts, hasStdin, resolveText } from './input.js';
 import { color, entryJson, errline, json, out, setColor, shortId } from './render.js';
 import {
   appendCommand,
@@ -171,4 +171,7 @@ try {
   await program.parseAsync(hoistGlobals(process.argv.slice(2)), { from: 'user' });
 } catch (err) {
   process.exitCode = reportError(err);
+} finally {
+  // Releases stdin, so a command that prompted can still exit on its own.
+  closePrompts();
 }
