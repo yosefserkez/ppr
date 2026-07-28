@@ -1,4 +1,5 @@
 import { emitKeypressEvents } from 'node:readline';
+import { detachLineInput } from '../input.js';
 import { normalizeKey, type Key, type NodeReadlineKey } from './key.js';
 
 /**
@@ -38,6 +39,8 @@ export class Keyboard {
     if (this.active) return;
     this.active = true;
 
+    // Exactly one consumer may read stdin. Any line-based prompt hands it over.
+    detachLineInput();
     emitKeypressEvents(this.stdin);
     if (this.stdin.isTTY) this.stdin.setRawMode(true);
     this.stdin.resume();

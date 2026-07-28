@@ -198,7 +198,7 @@ test('doctor reports without a vault instead of crashing', async () => {
   try {
     const { code, stdout } = await ppr(dir, ['doctor']);
     assert.equal(code, 0);
-    assert.match(stdout, /vault/);
+    assert.match(stdout, /Vault/i);
     assert.match(stdout, /ppr init/);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -305,5 +305,85 @@ test('running out of answers is an error, not a hang', async () => {
     const { code, stderr } = await ppr(dir, ['ai', 'setup'], { input: 'anthropic\n' });
     assert.equal(code, 2);
     assert.match(stderr, /No input left to answer/);
+  });
+});
+
+test('doctor and setup report the same checks as data', async () => {
+  await withVault(async (dir) => {
+    const doctor = JSON.parse((await ppr(dir, ['doctor', '--json'])).stdout);
+    const setup = JSON.parse((await ppr(dir, ['setup', '--json'])).stdout);
+
+    // One registry, two renderings — they must never drift apart.
+    assert.deepEqual(
+      doctor.checks.map((c) => c.id),
+      setup.checks.map((c) => c.id),
+    );
+    assert.equal(doctor.vault, dir);
+    assert.equal(typeof doctor.ok, 'boolean');
+  });
+});
+
+test('every broken check hands an agent the command that fixes it', async () => {
+  await withVault(async (dir) => {
+    const { checks } = JSON.parse((await ppr(dir, ['doctor', '--json'])).stdout);
+    const broken = checks.filter((c) => c.status !== 'ok');
+    assert.ok(broken.length, 'a fresh vault has things left to configure');
+
+    for (const check of broken) {
+      assert.ok(check.fix, `${check.id} is broken with no fix command`);
+      assert.match(check.fix, /^(ppr|brew|ollama|xcode-select|upgrade)/);
+    }
+  });
+});
+
+test('checks follow the configuration they depend on', async () => {
+  await withVault(async (dir) => {
+    const ids = async () =>
+      JSON.parse((await ppr(dir, ['doctor', '--json'])).stdout).checks.map((c) => c.id);
+
+    assert.ok(!(await ids()).includes('voice.model'), 'no whisper checks before whisper is chosen');
+
+    await ppr(dir, ['config', 'set', 'transcribe.provider', 'whisper-cpp']);
+    const after = await ids();
+    assert.ok(after.includes('voice.binary'), 'choosing whisper adds its binary check');
+    assert.ok(after.includes('voice.model'), 'and its model check');
+
+    await ppr(dir, ['config', 'set', 'ai.provider', 'anthropic']);
+    assert.ok((await ids()).includes('ai.key'), 'a hosted backend adds a key check');
+  });
+});
+
+test('setup without a terminal prints the plan instead of hanging', async () => {
+  await withVault(async (dir) => {
+    const { code, stdout } = await ppr(dir, ['setup']);
+    assert.equal(code, 0);
+    assert.match(stdout, /needs a terminal/);
+    assert.match(stdout, /ppr config set/, 'the plan names the plain commands');
+  });
+});
+
+test('voice refuses before recording when the chain is incomplete', async () => {
+  await withVault(async (dir) => {
+    // Provider set, model missing: this is the case that used to record first
+    // and only then discover the problem, throwing the audio away.
+    await ppr(dir, ['config', 'set', 'transcribe.provider', 'whisper-cpp']);
+    const { code, stderr } = await ppr(dir, ['voice']);
+    assert.equal(code, 4);
+    assert.match(stderr, /model file|not installed/);
+    assert.match(stderr, /ppr setup/);
+  });
+});
+
+test('voice keeps the audio when transcription fails', async () => {
+  await withVault(async (dir) => {
+    const missing = join(dir, 'nope.wav');
+    await ppr(dir, ['config', 'set', 'transcribe.provider', 'command']);
+    await ppr(dir, ['config', 'set', 'transcribe.command', 'false']);
+
+    const { code, stderr } = await ppr(dir, ['voice', missing]);
+    assert.notEqual(code, 0);
+    // The file was supplied rather than recorded, so no "your recording is
+    // safe" line — but it must still fail cleanly rather than crash.
+    assert.doesNotMatch(stderr, /node:internal/);
   });
 });

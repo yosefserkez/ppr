@@ -26,6 +26,7 @@ import {
 } from '@ppr/core/node';
 import { join } from 'node:path';
 import { globals, withVault } from '../context.js';
+import { writeSetting } from '../config-io.js';
 import { confirm, promptLine } from '../input.js';
 import { select } from '../ui/select.js';
 import { color, json, out, errline, table } from '../render.js';
@@ -101,20 +102,10 @@ export function configCommand(): Command {
     .action(async (key: string, value: string, flags: { local?: boolean }, self: Command) => {
       const g = globals(self);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
-      const effective = await loadConfig(found.root);
-      // Validate against the effective config, then persist only the delta.
-      setPath(effective, key, value);
+      const written = await writeSetting(found.root, key, value, flags);
 
-      const path = configTarget(flags, found.root);
-      const layer = await readConfigLayer(path);
-      const merged = setPath(
-        validateConfig(mergeConfig(structuredClone(DEFAULT_CONFIG), layer)),
-        key,
-        value,
-      );
-      await writeConfigLayer(path, pruneDefaults(merged, layer, key));
-      if (g.json) json({ key, value: getPath(merged, key), file: path });
-      else out(`${color.green('✓')} ${key} = ${String(getPath(merged, key))}  ${color.dim(path)}`);
+      if (g.json) json({ key, value: written.value, file: written.file });
+      else out(`${color.green('✓')} ${key} = ${String(written.value)}  ${color.dim(written.file)}`);
     });
 
   cmd
@@ -305,68 +296,6 @@ export function aiCommand(): Command {
     );
 
   return cmd;
-}
-
-/** `ppr doctor` — every dependency, checked, with the fix printed next to it. */
-export function doctorCommand(): Command {
-  return new Command('doctor')
-    .description('check the environment and report anything that needs attention')
-    .action(async (_flags: unknown, self: Command) => {
-      const g = globals(self);
-      const checks: Array<{ name: string; ok: boolean; detail: string; hint?: string }> = [];
-      const add = (name: string, ok: boolean, detail: string, hint?: string) =>
-        checks.push({ name, ok, detail, ...(hint ? { hint } : {}) });
-
-      const found = findVault(g.vault ? { explicit: g.vault } : {});
-      add('vault', found.exists, found.root, found.exists ? undefined : 'Run `ppr init`');
-
-      const node = process.versions.node;
-      add('node', Number(node.split('.')[0]) >= 20, `v${node}`, 'ppr needs Node 20.11+');
-
-      if (found.exists) {
-        const config = await loadConfig(found.root);
-        const secrets = await loadSecrets();
-        const { ai, transcribe } = config;
-
-        if (ai.provider === 'none') {
-          add('ai', true, 'not configured (offline heuristics)', 'Run `ppr ai setup` to enable');
-        } else {
-          const keyName = ai.apiKeyEnv ?? PROVIDER_DEFAULTS[ai.provider]?.apiKeyEnv;
-          const ok = !keyName || Boolean(secrets(keyName));
-          add('ai', ok, `${ai.provider}/${ai.model}`, ok ? undefined : `Set ${keyName} or run \`ppr ai key ${keyName}\``);
-        }
-        if (ai.provider === 'apple') {
-          const swiftc = await which('swiftc');
-          add('swiftc', Boolean(swiftc), swiftc ?? 'not found', 'xcode-select --install');
-        }
-        if (transcribe.provider === 'none') {
-          add('voice', true, 'not configured', 'Set transcribe.provider to use `ppr voice`');
-        } else {
-          const t = createTranscriber(transcribe, secrets);
-          add('voice', Boolean(t), transcribe.provider);
-          if (transcribe.provider === 'whisper-cpp') {
-            const bin = await which(transcribe.binary || 'whisper-cli');
-            add('whisper', Boolean(bin), bin ?? 'not found', 'brew install whisper-cpp');
-            add('whisper model', Boolean(transcribe.model), transcribe.model ?? 'not set', 'ppr config set transcribe.model <path>');
-          }
-        }
-        const recorder = (await which('rec')) ?? (await which('ffmpeg'));
-        add('recorder', Boolean(recorder), recorder ?? 'not found', 'brew install sox (only needed for `ppr voice`)');
-
-        const vault = await openVault({ ...(g.vault ? { vault: g.vault } : {}) });
-        add('entries', true, String(vault.stats().entries));
-        await vault.close();
-      }
-
-      if (g.json) return json(checks);
-      for (const check of checks) {
-        const mark = check.ok ? color.green('✓') : color.yellow('!');
-        out(`${mark} ${check.name.padEnd(14)} ${check.detail}`);
-        if (!check.ok && check.hint) out(`  ${color.dim(check.hint)}`);
-      }
-      const failed = checks.filter((c) => !c.ok).length;
-      if (failed) errline(`\n${color.yellow(`${failed} thing${failed === 1 ? '' : 's'} to look at`)}`);
-    });
 }
 
 /** `ppr reindex` — for when files changed underneath ppr. */

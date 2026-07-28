@@ -172,6 +172,7 @@ terminal is logic in the wrong file.
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
 | A decision about "what can I see next" | `core/src/navigate.ts` (it is a graph question) |
+| Something that can be wrong with a user's setup | `cli/src/setup/checks.ts` — one registry, rendered by both `doctor` and `setup` |
 | Terminal input, raw mode, escape codes | `packages/cli/src/ui/screen.ts`, nowhere else |
 
 ---
@@ -356,6 +357,18 @@ is gone. Creating a fresh interface per question made it worse — closing one e
 the stream, so the second question never resolved and the process died with an
 unsettled promise. One shared reader that queues lines fixes both, and makes
 `ppr ai setup < answers.txt` work.
+
+**L11. Only one consumer may read stdin.** A readline interface left attached
+while `Keyboard` is in raw mode delivers every keystroke twice — once as a line,
+once as a keypress — so a confirm and the picker after it both consumed the same
+answer. `Keyboard.start()` now detaches line input, and queued lines survive the
+handover.
+
+**L12. Preflight the whole chain, not the first link.** `ppr voice` checked that
+a transcription provider was configured, then recorded, then discovered the
+model file was missing — and the recording died with the error. Check everything
+the operation needs before the expensive or irreversible part, and if it fails
+afterwards anyway, tell the user where their data is.
 
 ---
 

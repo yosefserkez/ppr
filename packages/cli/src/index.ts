@@ -27,13 +27,8 @@ import {
   windowCommands,
 } from './commands/browse.js';
 import { askCommand, memoryCommand, recapCommand } from './commands/think.js';
-import {
-  aiCommand,
-  configCommand,
-  doctorCommand,
-  initCommand,
-  reindexCommand,
-} from './commands/settings.js';
+import { aiCommand, configCommand, initCommand, reindexCommand } from './commands/settings.js';
+import { doctorCommand, setupCommand } from './commands/setup.js';
 
 const EXIT_CODES: Record<string, number> = {
   ENOVAULT: 4,
@@ -60,7 +55,7 @@ program
   .option('--json', 'machine-readable output')
   .option('-q, --quiet', 'ids only, no chrome')
   .option('--no-color', 'disable colour')
-  .option('--no-ai', 'stay offline for this command')
+  .option('--no-ai', 'skip model generation for this command (transcription still works)')
   .showHelpAfterError('(run `ppr --help`)')
   .enablePositionalOptions();
 
@@ -93,6 +88,7 @@ program.addCommand(memoryCommand());
 
 // Settings
 program.addCommand(initCommand());
+program.addCommand(setupCommand());
 program.addCommand(configCommand());
 program.addCommand(aiCommand());
 program.addCommand(doctorCommand());
@@ -133,6 +129,7 @@ program.addHelpText(
   'after',
   `
 Examples:
+  ppr setup                                       guided setup, downloads included
   ppr "deploy failed again, rolled back to 4.2"   quick log
   cat notes.txt | ppr dump                        clean up a wall of text
   ppr clip https://example.com/post               save what a page says

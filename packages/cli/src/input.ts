@@ -107,71 +107,72 @@ export async function promptMultiline(prompt: string): Promise<string> {
  * promise — `ppr ai setup < answers.txt` was simply broken. Sharing one
  * interface keeps sequential prompts working whether input is typed or piped.
  */
-interface LineReader {
-  next(question: string): Promise<string>;
-  close(): void;
-}
+// Queued outside the readline instance, so the interface can be detached and
+// rebuilt (see `detachLineInput`) without losing answers already typed.
+const buffered: string[] = [];
+const waiting: Array<(line: string | null) => void> = [];
+let rl: Interface | undefined;
+let stdinEnded = false;
+let detaching = false;
 
-let reader: LineReader | undefined;
-
-function lineReader(): LineReader {
-  if (reader) return reader;
-
-  const rl: Interface = createInterface({ input: process.stdin, output: process.stderr });
-  // Piped input arrives all at once: readline emits every line immediately, and
-  // a line nobody happened to be awaiting is gone. So lines are queued here and
-  // handed out as questions ask for them.
-  const buffered: string[] = [];
-  const waiting: Array<(line: string | null) => void> = [];
-  let ended = false;
-
+function attach(): Interface {
+  if (rl) return rl;
+  rl = createInterface({ input: process.stdin, output: process.stderr });
   rl.on('line', (line: string) => {
     const next = waiting.shift();
     if (next) next(line);
     else buffered.push(line);
   });
   rl.once('close', () => {
-    ended = true;
+    rl = undefined;
+    // Closing to hand stdin over is not the same as stdin running out.
+    if (detaching) return;
+    stdinEnded = true;
     while (waiting.length) waiting.shift()!(null);
   });
+  return rl;
+}
 
-  const exhausted = (question: string) =>
-    new PprError('EINVALID', `No input left to answer: ${question.trim()}`);
-
-  reader = {
-    async next(question: string): Promise<string> {
-      process.stderr.write(question);
-
-      // A terminal echoes what the user types; a pipe does not, so echo it here
-      // and a scripted run reads back like a typed one.
-      const echo = (line: string) => {
-        if (!process.stdin.isTTY) process.stderr.write(`${line}\n`);
-        return line;
-      };
-
-      const ready = buffered.shift();
-      if (ready !== undefined) return echo(ready);
-      if (ended) throw exhausted(question);
-
-      const line = await new Promise<string | null>((settle) => waiting.push(settle));
-      if (line === null) throw exhausted(question);
-      return echo(line);
-    },
-    close() {
-      rl.close();
-      reader = undefined;
-    },
-  };
-  return reader;
+/**
+ * Gives up stdin so a raw-mode prompt can own it.
+ *
+ * Exactly one consumer may read stdin at a time. A readline interface left
+ * attached while `Keyboard` is in raw mode means every keystroke is delivered
+ * twice — once as a line, once as a keypress — and both prompts react.
+ */
+export function detachLineInput(): void {
+  if (!rl) return;
+  detaching = true;
+  rl.close();
+  detaching = false;
+  rl = undefined;
 }
 
 export async function promptLine(question: string): Promise<string> {
-  return (await lineReader().next(question)).trim();
+  process.stderr.write(question);
+
+  // A terminal echoes what the user types; a pipe does not, so echo it here and
+  // a scripted run reads back like a typed one.
+  const echo = (line: string) => {
+    if (!process.stdin.isTTY) process.stderr.write(`${line}\n`);
+    return line.trim();
+  };
+  const exhausted = () =>
+    new PprError('EINVALID', `No input left to answer: ${question.trim()}`);
+
+  const ready = buffered.shift();
+  if (ready !== undefined) return echo(ready);
+  if (stdinEnded) throw exhausted();
+
+  attach();
+  const line = await new Promise<string | null>((settle) => waiting.push(settle));
+  if (line === null) throw exhausted();
+  return echo(line);
 }
 
 /** Releases stdin so the process can exit. Safe to call more than once. */
 export function closePrompts(): void {
-  reader?.close();
+  detachLineInput();
 }
 
 export async function confirm(question: string, defaultYes = false): Promise<boolean> {

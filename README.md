@@ -36,8 +36,14 @@ because a model was unavailable, and nothing silently discards your words.
 ```bash
 git clone https://github.com/yourname/ppr && cd ppr
 ./scripts/install.sh
-ppr init
+ppr setup
 ```
+
+`ppr setup` walks you through it: creates the vault, picks a model backend,
+stores a key or downloads a local model, sets up voice, and installs what is
+missing — with your say-so at every step, and showing the plain command for
+everything it does. `ppr init` on its own still works if you would rather do it
+by hand.
 
 Requires Node 20.11+ and pnpm.
 
@@ -148,6 +154,27 @@ fragment.
 | `ppr ask <question>` | An answer grounded in your entries, with citations. |
 | `ppr memory learn` | Pulls durable facts out and keeps them. |
 
+## Setup and diagnosis
+
+```bash
+ppr setup            # guided: configure, install, download
+ppr doctor           # what is wrong, and the command that fixes it
+ppr doctor --fix     # offer to fix each one
+ppr doctor --json    # the same list as data
+```
+
+Both read one registry of checks, so a wizard cannot drift from the diagnosis.
+Every check that can fail carries the exact non-interactive command that fixes
+it, which is what `--json` gives an agent:
+
+```json
+{ "id": "voice.model", "status": "missing", "detail": "no model file set",
+  "fix": "ppr config set transcribe.model <path>", "repairable": true }
+```
+
+Checks follow your configuration: choose whisper and the binary and model checks
+appear; choose a hosted backend and an API-key check appears.
+
 ## AI, on your terms
 
 ```bash
@@ -192,8 +219,16 @@ ppr config set transcribe.model ~/models/ggml-base.en.bin
 ppr voice
 ```
 
-`whisper-cpp` keeps transcription on your machine. `openai` and `command` backends
-are also available. `ppr doctor` tells you exactly what is missing.
+`whisper-cpp` keeps transcription on your machine — `ppr setup` will download a
+model for you (74 MB to 465 MB, your pick) and point the config at it. `openai`
+and `command` backends are also available.
+
+`ppr voice` checks the whole chain before the microphone opens, and if
+transcription fails afterwards it tells you where your audio is rather than
+discarding it.
+
+`--no-ai` skips model *generation*, not transcription — `ppr --no-ai voice` still
+records and transcribes, it just stores your words as they came out.
 
 ## Config
 

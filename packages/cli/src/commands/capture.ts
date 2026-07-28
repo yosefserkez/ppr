@@ -1,6 +1,9 @@
 import { Command } from 'commander';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { type Entry, type Vault, PprError } from '@ppr/core';
-import { record } from '@ppr/core/node';
+import { record, which } from '@ppr/core/node';
 import { globals, withVault } from '../context.js';
 import { confirm, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -173,27 +176,37 @@ export function voiceCommand(): Command {
         const g = globals(self);
         let path = file;
 
-        // Fail before recording. Discovering there is no transcriber after
-        // speaking for two minutes would throw the recording away.
-        if (vault.config.transcribe.provider === 'none') {
-          throw new PprError(
-            'ECONFIG',
-            'No transcription backend configured',
-            'Run `ppr ai setup`, or: ppr config set transcribe.provider whisper-cpp',
-          );
-        }
+        // Preflight the whole chain before recording. Checking only the
+        // provider was not enough: a missing model file surfaced *after* the
+        // user had spoken, and the recording went in the bin with the error.
+        await preflightVoice(vault);
 
+        let recorded = false;
         if (!path) {
           if (!process.stdin.isTTY) throw new PprError('EINVALID', 'No audio file given');
           const recording = await record();
           errline(color.red('● recording') + color.dim(' — press Enter to stop'));
           await promptLine('');
           path = await recording.stop();
+          recorded = true;
         }
 
         if (!g.quiet && !g.json) errline(color.dim('Transcribing …'));
-        const transcript = await vault.transcribe({ path });
-        if (!transcript.trim()) throw new PprError('EEXTERNAL', 'Transcription came back empty');
+        let transcript: string;
+        try {
+          transcript = await vault.transcribe({ path });
+        } catch (err) {
+          // Whatever went wrong, the audio still exists and is still theirs.
+          if (recorded) {
+            errline(color.yellow(`Your recording is safe at ${path}`));
+            errline(color.dim(`Retry once fixed:  ppr voice ${path}`));
+          }
+          throw err;
+        }
+        if (!transcript.trim()) {
+          if (recorded) errline(color.yellow(`Nothing was transcribed. Audio kept at ${path}`));
+          throw new PprError('EEXTERNAL', 'Transcription came back empty');
+        }
 
         if (flags.transcriptOnly) {
           out(transcript);
@@ -209,6 +222,44 @@ export function voiceCommand(): Command {
       }),
   );
   return cmd;
+}
+
+/**
+ * Everything `ppr voice` needs, checked before the microphone opens.
+ * The setup command can fix any of these; the hints say so.
+ */
+async function preflightVoice(vault: Vault): Promise<void> {
+  const { transcribe } = vault.config;
+  if (transcribe.provider === 'none') {
+    throw new PprError(
+      'ECONFIG',
+      'No transcription backend configured',
+      'Run `ppr setup` to be walked through it, or: ppr config set transcribe.provider whisper-cpp',
+    );
+  }
+  if (transcribe.provider !== 'whisper-cpp') return;
+
+  const binary = transcribe.binary || 'whisper-cli';
+  if (!(await which(binary))) {
+    throw new PprError('EEXTERNAL', `${binary} is not installed`, 'Run `ppr setup`, or: brew install whisper-cpp');
+  }
+  if (!transcribe.model) {
+    throw new PprError(
+      'ECONFIG',
+      'whisper.cpp needs a model file',
+      'Run `ppr setup` to download one, or set transcribe.model yourself',
+    );
+  }
+  const model = transcribe.model.startsWith('~/')
+    ? join(homedir(), transcribe.model.slice(2))
+    : transcribe.model;
+  if (!existsSync(model)) {
+    throw new PprError(
+      'ECONFIG',
+      `The speech model is missing: ${transcribe.model}`,
+      'Run `ppr setup` to download one',
+    );
+  }
 }
 
 /** `ppr append` — keep a thread going without opening an editor. */

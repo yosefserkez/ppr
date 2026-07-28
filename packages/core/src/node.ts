@@ -25,6 +25,7 @@ export { run, which } from './node/exec.js';
 export { appleProvider, ensureAppleShim } from './node/apple.js';
 export { commandProvider } from './node/command-provider.js';
 export { createTranscriber, record, type Recording } from './node/transcribe.js';
+export { downloadFile, formatBytes, modelsDir, type DownloadProgress } from './node/download.js';
 
 /**
  * Defers construction until the first generate call, so a missing API key is
@@ -68,9 +69,13 @@ export async function openVault(opts: OpenVaultOptions = {}): Promise<Vault> {
 
   const config = await loadConfig(found.root, env);
   const secrets = await loadSecrets(env);
+  // `--no-ai` turns off *generation* — distilling, recaps, answers. Not
+  // transcription: that is how the words get in at all, and switching it off
+  // would make `ppr --no-ai voice` mean nothing. `ppr voice --raw` is how you
+  // say "transcribe it but leave my words alone".
   const offline = opts.noAI || env.PPR_NO_AI === '1';
   const provider = offline ? undefined : lazyProvider(config, secrets);
-  const transcriber = offline ? undefined : createTranscriber(config.transcribe, secrets);
+  const transcriber = createTranscriber(config.transcribe, secrets);
 
   return Vault.open({
     root: found.root,

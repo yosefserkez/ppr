@@ -47,6 +47,7 @@ Load the reference for the task at hand:
 | Add or change a command, flag, or output format | `references/add-command.md` |
 | Add an AI provider or transcription backend | `references/add-provider.md` |
 | Add or change an interactive terminal view | `references/interactive-ui.md` |
+| Add something that can be misconfigured or missing | `references/checks.md` |
 
 ## Always, regardless of task
 
