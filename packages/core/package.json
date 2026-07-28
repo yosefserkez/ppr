@@ -1,0 +1,30 @@
+{
+  "name": "@ppr/core",
+  "version": "0.1.0",
+  "description": "Portable, local-first engine for ppr: markdown entries, search, links, and pluggable AI.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "yaml": "^2.6.1"
+  }
+}

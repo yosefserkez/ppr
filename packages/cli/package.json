@@ -1,0 +1,37 @@
+{
+  "name": "ppr",
+  "version": "0.1.0",
+  "description": "Local-first notes, logs, and brain dumps in plain markdown, with optional local AI.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ppr": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "keywords": [
+    "notes",
+    "journal",
+    "cli",
+    "markdown",
+    "local-first",
+    "ai",
+    "zettelkasten"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@ppr/core": "workspace:*",
+    "commander": "^13.1.0",
+    "picocolors": "^1.1.1"
+  }
+}
