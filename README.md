@@ -74,7 +74,7 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | --- | --- |
 | `ppr "text"` | Quick log. The fastest path from thought to file. |
 | `ppr + text` | The same, without quoting. |
-| `ppr write` | A longer entry. Asks a follow-up question while you are still in it. |
+| `ppr write` | A longer entry, composed at a prompt. Asks a follow-up question. |
 | `ppr` | What you wrote today. Writes nothing. |
 | `ppr dump [text]` | Brain dump in, clean entry out. Reads stdin. |
 | `ppr clip <url>` | Fetches a page, extracts the content, saves what it says. |
@@ -122,6 +122,24 @@ asking you anything. A one-liner saves and gets out of the way.
 Follow-up questions belong to `ppr write`, where you opened a prompt and are
 already in a writing session. Add `--ask` to invite one onto a one-liner, or
 `--no-follow` to refuse it anywhere.
+
+### Composing with `ppr write`
+
+```
+What's on your mind?
+empty line or ctrl-d to save · ctrl-c to discard · -e for your editor
+ppr will ask a question or two when you finish
+│ rolled back the deploy
+│ the leak was in the cache
+│
+? What made you choose this over the alternative?
+  the tests kept flaking
+✓ zhameb rolled back the deploy
+```
+
+Every line you type carries a `│` gutter, so it is always clear you are typing
+into ppr and not into your shell. Finish with an empty line or Ctrl-D, abandon
+with Ctrl-C, and use `ppr write -e` when you want paragraphs and your own editor.
 
 A bare `ppr` shows today's entries instead of capturing, so running it by
 accident costs nothing.

@@ -420,6 +420,12 @@ one of them asked follow-up questions. Both now call `quickLog`. When adding a
 shortcut for an existing command, route it through that command rather than
 reimplementing the short version.
 
+**L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
+announced once in dim text that scrolled away, with no marker showing you were
+inside a prompt at all — so people could not tell ppr's input from their
+shell's, and could not get out. Interactive input needs a visible boundary on
+every line, more than one way to finish, and its instructions kept on screen.
+
 ---
 
 ## 10. Workflow

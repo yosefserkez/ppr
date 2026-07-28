@@ -133,18 +133,42 @@ export async function openEditor(initial = '', extension = 'md'): Promise<string
   }
 }
 
-/** Multi-line terminal capture. Blank line then EOF, or Ctrl-D, ends it. */
-export async function promptMultiline(prompt: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  process.stderr.write(`${prompt}\n`);
+/**
+ * Multi-line capture with a visible boundary.
+ *
+ * Every line is prefixed with a gutter, so it is never in doubt that you are
+ * typing into ppr rather than into your shell — a stray apostrophe leaves zsh
+ * showing its own `quote>` prompt, and the two should not look alike. Finishing
+ * is an empty line as well as Ctrl-D, because an invisible keystroke is not an
+ * exit anyone can find. `--edit` opens $EDITOR for anything with paragraphs.
+ */
+export async function promptMultiline(title: string, hints: string[] = []): Promise<string> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+    prompt: DIM_GUTTER,
+  });
+
+  process.stderr.write(`${title}\n`);
+  for (const hint of hints) process.stderr.write(`${DIM_HINT(hint)}\n`);
+
   const lines: string[] = [];
   try {
-    for await (const line of rl) lines.push(line);
+    rl.prompt();
+    for await (const line of rl) {
+      // A blank line ends the entry once there is something to end.
+      if (!line.trim() && lines.length) break;
+      lines.push(line);
+      rl.prompt();
+    }
   } finally {
     rl.close();
   }
   return lines.join('\n').trim();
 }
+
+const DIM_GUTTER = '\x1b[2m│\x1b[22m ';
+const DIM_HINT = (text: string): string => `\x1b[2m${text}\x1b[22m`;
 
 /**
  * One readline for the whole process.

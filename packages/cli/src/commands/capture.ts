@@ -110,7 +110,9 @@ export function writeCommand(): Command {
   captureFlags(cmd).action(async (text: string[], flags: CaptureFlags, self: Command) =>
     withVault(self, async (vault) => {
       const composed = !text.length && !flags.edit && process.stdin.isTTY;
-      const body = await resolveTextOrPrompt(text, flags);
+      const willAsk =
+        composed && vault.hasAI && wantsFollowUps({ refused: flags.follow === false, demanded: flags.ask, composed });
+      const body = await resolveTextOrPrompt(text, flags, { willAsk });
       const entry = await vault.add({
         body,
         kind: flags.kind ?? vault.config.capture.defaultKind,
@@ -144,10 +146,17 @@ export async function quickLog(
 }
 
 /** Interactive when there is nothing to read; never blocks a script. */
-async function resolveTextOrPrompt(text: string[] | undefined, flags: CaptureFlags): Promise<string> {
+async function resolveTextOrPrompt(
+  text: string[] | undefined,
+  flags: CaptureFlags,
+  session: { willAsk?: boolean } = {},
+): Promise<string> {
   const hasArgs = Boolean(text?.length);
   if (!hasArgs && !flags.edit && process.stdin.isTTY) {
-    const body = await promptMultiline(color.dim("What's on your mind? (Ctrl-D when done)"));
+    const body = await promptMultiline(color.bold("What's on your mind?"), [
+      'empty line or ctrl-d to save · ctrl-c to discard · -e for your editor',
+      ...(session.willAsk ? ['ppr will ask a question or two when you finish'] : []),
+    ]);
     if (!body) throw new PprError('EINVALID', 'Nothing written');
     return body;
   }
