@@ -31,6 +31,7 @@ import {
 import { askCommand, memoryCommand, recapCommand } from './commands/think.js';
 import { aiCommand, configCommand, initCommand, reindexCommand } from './commands/settings.js';
 import { doctorCommand, setupCommand } from './commands/setup.js';
+import { helpCommand, versionCommand } from './commands/meta.js';
 
 const EXIT_CODES: Record<string, number> = {
   ENOVAULT: 4,
@@ -95,6 +96,8 @@ program.addCommand(configCommand());
 program.addCommand(aiCommand());
 program.addCommand(doctorCommand());
 program.addCommand(reindexCommand());
+program.addCommand(helpCommand(program));
+program.addCommand(versionCommand());
 
 /** Every command name and alias, for did-you-mean. */
 const commandNames = (): string[] =>
@@ -103,26 +106,26 @@ const commandNames = (): string[] =>
 /**
  * Refuses to guess.
  *
- * `ppr serach redis` used to become a note saying "serach redis", because any
- * unrecognised word fell through to capture. No heuristic can separate a
- * mistyped command from a short note — the information is not in the text — so
- * ppr uses a signal that already exists: quoting. One argument is a note,
- * several are an attempted command. Both ways to log it are in the error.
+ * No heuristic can separate a mistyped command from a short note by reading the
+ * words, so the signal comes from the shape of the invocation instead: a note is
+ * a sentence, a command is a word. One argument containing spaces was quoted as
+ * a phrase and is unmistakably text; a single bare word is not, however much it
+ * looks like English. `sync`, `add`, and `hlep` are all commands someone
+ * expected to exist, and none of them may quietly become an entry.
  */
 function notACommand(text: string[]): PprError {
   const guess = suggest(text[0]!, commandNames());
-  const quoted = text.join(' ').replaceAll('"', '\\"');
-  return new PprError(
-    'EINVALID',
-    `Unknown command: ${text[0]}`,
-    [
-      guess ? `Did you mean \`ppr ${guess}\`?` : '',
-      `To log it as a note:  ppr "${truncate(quoted, 48)}"`,
-      `Or write it directly: ppr + ${truncate(text.join(' '), 48)}`,
-    ]
-      .filter(Boolean)
-      .join('\n  '),
-  );
+  const joined = text.join(' ');
+  const hints = [guess ? `Did you mean \`ppr ${guess}\`?` : ''];
+
+  // Only offer quoting when quoting would actually change the outcome.
+  if (text.length > 1) {
+    hints.push(`To log it as a note:  ppr "${truncate(joined.replaceAll('"', '\\"'), 48)}"`);
+    hints.push(`Or write it directly: ppr + ${truncate(joined, 48)}`);
+  } else {
+    hints.push(`To log it as a note:  ppr + ${truncate(joined, 48)}`);
+  }
+  return new PprError('EINVALID', `Unknown command: ${text[0]}`, hints.filter(Boolean).join('\n  '));
 }
 
 /**
@@ -130,17 +133,19 @@ function notACommand(text: string[]): PprError {
  * A bare `ppr` reports instead of capturing, so running it by accident is free.
  */
 program
-  .argument('[text...]', 'a quoted note to log, e.g. ppr "shipped it"')
+  .argument('[text...]', 'a quoted note to log, e.g. ppr "shipped it"; single words need `ppr +`')
   .action(async (text: string[], _flags: unknown, self: Command) => {
     const piped = !text.length && hasStdin();
 
     if (!text.length && !piped) {
       return withVault(self, async (vault) => overview(vault));
     }
-    // Several bare words are an attempted command, not a note.
-    if (text.length > 1) throw notACommand(text);
-    // A single word that is nearly a command is a typo, not a one-word note.
-    if (text.length === 1 && suggest(text[0]!, commandNames())) throw notACommand(text);
+    // A note is a sentence; a command is a word. One argument containing
+    // whitespace was quoted as a phrase and is unmistakably text. Anything else
+    // — several bare words, or a lone word like `sync` — is a command someone
+    // got wrong, however much English it happens to be.
+    const isPhrase = text.length === 1 && /\s/.test(text[0]!);
+    if (!piped && !isPhrase) throw notACommand(text);
 
     await withVault(self, async (vault) => {
       const body = await resolveText(text);

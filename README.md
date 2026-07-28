@@ -86,15 +86,17 @@ cuts filler and repetition, keeps every fact, and never invents anything. A bare
 URL is treated as a clip, because remembering which command you wanted is not a
 good use of anyone's attention.
 
-### Quoting is how you say "this is a note"
+### A note is a sentence; a command is a word
 
-`ppr "shipped the migration"` logs. `ppr shipped the migration` does not — it
-reports an unknown command and tells you both ways to log it.
+`ppr "shipped the migration"` logs it. `ppr shipped the migration` does not, and
+neither does `ppr sync` — both report an unknown command.
 
-That line exists because no rule can separate `ppr serach redis` (a typo) from
-`ppr lunch with sam` (a note) by looking at the words. Rather than guess and
-occasionally file your typos as notes, ppr uses a signal the shell already
-has: one argument is a note, several are an attempted command.
+The rule exists because no amount of cleverness can separate `ppr serach redis`
+(a typo) from `ppr lunch with sam` (a note) by reading the words. So ppr uses
+the shape of the invocation instead: **one quoted phrase is text; a bare word is
+a command you got wrong**, however much English it happens to be. `sync`, `add`,
+`log`, and `note` are all things people reasonably expect a note tool to do, and
+none of them should quietly become an entry.
 
 ```
 $ ppr serach redis
@@ -104,8 +106,17 @@ error Unknown command: serach
   Or write it directly: ppr + serach redis
 ```
 
-`ppr + …` is the unquoted path when you would rather not reach for quotes, and
-a bare `ppr` shows today's entries instead of capturing — so running it by
+Every refusal names the likely command and shows how to capture the text anyway,
+so the rule is learned from the error rather than from this page. Three things
+always capture, no guessing involved:
+
+```bash
+ppr "any quoted phrase"     # the fast path
+ppr + one or more words     # unquoted; `add` and `new` work too
+echo text | ppr             # a pipe is already deliberate
+```
+
+A bare `ppr` shows today's entries instead of capturing, so running it by
 accident costs nothing.
 
 ## Browse

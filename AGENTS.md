@@ -109,10 +109,13 @@ warnings, confirmations, rebuild chatter — goes to stderr. `ppr ls --json | jq
 must never see a stray word.
 
 **I11. Never turn a mistake into data.** A command that is not recognised is an
-error, never an entry. Capture happens when the user said so — a quoted
-argument, `+`, `write`, or a pipe — and never as a fallback for parsing failure.
-*Enforced by:* the default action in `cli/src/index.ts`; test "a mistyped
-command never becomes an entry".
+error, never an entry. Capture requires an unambiguous signal: a single argument
+containing whitespace (a quoted phrase), an explicit `+`/`add`/`new`/`write`, or
+a pipe. A bare word is always a command — `sync`, `log`, and `note` are things
+people expect this tool to do, and a vault only stays trustworthy if nothing
+lands in it by accident. *Enforced by:* the default action in
+`cli/src/index.ts`; tests "a mistyped command never becomes an entry" and "a
+bare word is never a note, however ordinary it looks".
 
 ---
 

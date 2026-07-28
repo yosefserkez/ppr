@@ -112,8 +112,8 @@ test('search finds entries and -q gives pipeable ids', async () => {
 
 test('show resolves latest and prints the body', async () => {
   await withVault(async (dir) => {
-    await ppr(dir, ['first']);
-    await ppr(dir, ['second']);
+    await ppr(dir, ['+', 'first']);
+    await ppr(dir, ['+', 'second']);
     const { stdout } = await ppr(dir, ['show', 'latest', '--body']);
     assert.equal(stdout.trim(), 'second');
   });
@@ -207,8 +207,8 @@ test('doctor reports without a vault instead of crashing', async () => {
 
 test('export round-trips through json and jsonl', async () => {
   await withVault(async (dir) => {
-    await ppr(dir, ['alpha']);
-    await ppr(dir, ['beta']);
+    await ppr(dir, ['+', 'alpha']);
+    await ppr(dir, ['+', 'beta']);
 
     const asJson = JSON.parse((await ppr(dir, ['export'])).stdout);
     assert.equal(asJson.length, 2);
@@ -261,7 +261,7 @@ test('edit opens the entry file itself, frontmatter included', async () => {
 
 test('edit reports when nothing changed', async () => {
   await withVault(async (dir) => {
-    await ppr(dir, ['untouched']);
+    await ppr(dir, ['+', 'untouched']);
     const { stdout } = await ppr(dir, ['edit', 'latest'], { editor: '/usr/bin/true' });
     assert.match(stdout, /No changes/);
   });
@@ -493,9 +493,21 @@ test('+ captures without quoting', async () => {
   });
 });
 
-test('an ordinary one-word note is not blocked', async () => {
+test('a bare word is never a note, however ordinary it looks', async () => {
   await withVault(async (dir) => {
-    assert.equal((await ppr(dir, ['lunch'])).code, 0);
+    // "lunch" is a plausible note and "sync" is a plausible command, and argv
+    // cannot tell them apart — so neither is written without an explicit ask.
+    for (const word of ['lunch', 'sync', 'add-something']) {
+      const { code, stderr } = await ppr(dir, [word]);
+      assert.equal(code, 2, `${word} should not be captured`);
+      assert.match(stderr, /ppr \+ /, 'the error shows the explicit way');
+      // Quoting cannot help a single word, so it must not be suggested.
+      assert.doesNotMatch(stderr, /To log it as a note: {2}ppr "/);
+    }
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
+
+    // And the explicit way works.
+    assert.equal((await ppr(dir, ['+', 'lunch'])).code, 0);
     const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
     assert.equal(entry.body, 'lunch');
   });
@@ -521,5 +533,50 @@ test('piping still captures, because a pipe is deliberate', async () => {
     assert.equal(code, 0);
     const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
     assert.equal(entry.body, 'straight from a pipe');
+  });
+});
+
+test('help and version are commands, not notes', async () => {
+  await withVault(async (dir) => {
+    const help = await ppr(dir, ['help']);
+    assert.equal(help.code, 0);
+    assert.match(help.stdout, /Usage: ppr/);
+
+    const scoped = await ppr(dir, ['help', 'search']);
+    assert.equal(scoped.code, 0);
+    assert.match(scoped.stdout, /search titles, bodies, and tags/);
+
+    const version = JSON.parse((await ppr(dir, ['version', '--json'])).stdout);
+    assert.equal(typeof version.version, 'string');
+
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
+  });
+});
+
+test('a mistyped help is a suggestion, not an entry', async () => {
+  await withVault(async (dir) => {
+    for (const typo of ['hlep', 'halp']) {
+      const { code, stderr } = await ppr(dir, [typo]);
+      assert.equal(code, 2);
+      assert.match(stderr, /Did you mean `ppr help`/);
+    }
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
+  });
+});
+
+test('help for a command that does not exist suggests one that does', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['help', 'serach']);
+    assert.equal(code, 2);
+    assert.match(stderr, /Did you mean `ppr help search`/);
+  });
+});
+
+test('add and new reach the same place as write', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['add', 'from the add alias']);
+    await ppr(dir, ['new', 'from the new alias']);
+    const bodies = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).map((e) => e.body);
+    assert.deepEqual(bodies.sort(), ['from the add alias', 'from the new alias']);
   });
 });

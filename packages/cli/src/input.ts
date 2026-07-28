@@ -16,7 +16,7 @@ import { PprError } from '@ppr/core';
 export const hasStdin = (): boolean => {
   if (process.stdin.isTTY) return false;
   try {
-    // Pipes, sockets, and redirected files all deliver EOF. Character devices
+    // Pipes, sockets, and redirected files carry input. Character devices
     // (a tty, /dev/null) are either nothing to read or a wait with no end.
     return !fstatSync(0).isCharacterDevice();
   } catch {
@@ -24,10 +24,57 @@ export const hasStdin = (): boolean => {
   }
 };
 
+/** A socket inherited from a long-lived parent may never send or close. */
+const inheritedSocket = (): boolean => {
+  try {
+    return fstatSync(0).isSocket();
+  } catch {
+    return false;
+  }
+};
+
+/** Long enough for any parent that means to write, short enough not to feel stuck. */
+const FIRST_BYTE_MS = 2000;
+
+/**
+ * Reads piped input.
+ *
+ * A `|` or `<` always ends, so those are read to EOF with no deadline — cutting
+ * a slow producer short would lose someone's text. An inherited socket is
+ * different: an editor plugin or a supervisor can hand over a stdin that never
+ * sends a byte and never closes, and waiting on it forever is the hang that
+ * invariant I6 exists to prevent. So only sockets get a deadline, and only on
+ * the *first* byte; once input starts arriving it is read to completion.
+ */
 export async function readStdin(): Promise<string> {
   if (!hasStdin()) return '';
+  const stream = process.stdin;
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+
+  if (inheritedSocket()) {
+    const started = await new Promise<boolean>((settle) => {
+      const timer = setTimeout(() => finish(false), FIRST_BYTE_MS);
+      const finish = (value: boolean) => {
+        clearTimeout(timer);
+        stream.off('readable', onReadable);
+        stream.off('end', onEnd);
+        settle(value);
+      };
+      const onReadable = () => finish(true);
+      const onEnd = () => finish(false);
+      stream.once('readable', onReadable);
+      stream.once('end', onEnd);
+    });
+    if (!started) {
+      // Give the descriptor back, or the event loop stays alive on a stream
+      // nobody is writing to and the process never exits.
+      stream.pause();
+      (stream as unknown as { unref?: () => void }).unref?.();
+      return '';
+    }
+  }
+
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks).toString('utf8');
 }
 

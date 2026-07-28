@@ -74,8 +74,11 @@ export function writeCommand(): Command {
   const cmd = new Command('write')
     .alias('w')
     // `+` is the unquoted fast path: shell-safe, and unmistakably an intent to
-    // capture rather than a mistyped command.
+    // capture rather than a mistyped command. `add` and `new` are what people
+    // type from muscle memory, and they used to be filed as notes saying "add".
     .alias('+')
+    .alias('add')
+    .alias('new')
     .description('write an entry (opens a prompt, or takes text/stdin)')
     .argument('[text...]', 'entry text')
     .option('-k, --kind <kind>', 'entry kind', 'log');
@@ -323,6 +326,7 @@ export function appendCommand(): Command {
 export function removeCommand(): Command {
   return new Command('rm')
     .alias('delete')
+    .alias('remove')
     .description('delete an entry')
     .argument('<ref...>', 'entry ids, `latest`, or title fragments')
     .option('-f, --force', 'skip the confirmation')
