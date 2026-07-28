@@ -74,7 +74,7 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | --- | --- |
 | `ppr "text"` | Quick log. The fastest path from thought to file. |
 | `ppr + text` | The same, without quoting. |
-| `ppr write` | A longer entry, with a follow-up question or two. |
+| `ppr write` | A longer entry. Asks a follow-up question while you are still in it. |
 | `ppr` | What you wrote today. Writes nothing. |
 | `ppr dump [text]` | Brain dump in, clean entry out. Reads stdin. |
 | `ppr clip <url>` | Fetches a page, extracts the content, saves what it says. |
@@ -115,6 +115,13 @@ ppr "any quoted phrase"     # the fast path
 ppr + one or more words     # unquoted; `add` and `new` work too
 echo text | ppr             # a pipe is already deliberate
 ```
+
+All three are the same code path, so they behave identically — including *not*
+asking you anything. A one-liner saves and gets out of the way.
+
+Follow-up questions belong to `ppr write`, where you opened a prompt and are
+already in a writing session. Add `--ask` to invite one onto a one-liner, or
+`--no-follow` to refuse it anywhere.
 
 A bare `ppr` shows today's entries instead of capturing, so running it by
 accident costs nothing.

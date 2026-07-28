@@ -13,10 +13,33 @@ interface CaptureFlags {
   tag?: string[];
   kind?: string;
   edit?: boolean;
+  /** Resolved decision, not the raw flag — see `wantsFollowUps`. */
   follow?: boolean;
+  ask?: boolean;
   quiet?: boolean;
   json?: boolean;
   print?: boolean;
+}
+
+/**
+ * Whether to ask a follow-up question, decided in one place.
+ *
+ * By intent, not syntax. A one-liner — `ppr "shipped it"`, `ppr + shipped it` —
+ * is the zero-friction path, and interrogating it every time taxes exactly the
+ * thing that should have none. An interactive `ppr write` is a writing session
+ * already, and one sharp question there is the point of the command.
+ */
+export function wantsFollowUps(opts: {
+  /** `--no-follow` was passed. */
+  refused?: boolean;
+  /** `--ask` was passed. */
+  demanded?: boolean;
+  /** The text came from the compose prompt rather than the command line. */
+  composed?: boolean;
+}): boolean {
+  if (opts.refused) return false;
+  if (opts.demanded) return true;
+  return Boolean(opts.composed);
 }
 
 /** Every capture command ends here, so output and follow-ups behave identically. */
@@ -24,7 +47,7 @@ async function finish(vault: Vault, entry: Entry, cmd: Command, flags: CaptureFl
   const g = globals(cmd);
   let result = entry;
 
-  if (flags.follow !== false && process.stdin.isTTY && vault.hasAI && !g.json) {
+  if (flags.follow && process.stdin.isTTY && vault.hasAI && !g.json) {
     result = (await runFollowUps(vault, result)) ?? result;
   }
 
@@ -66,7 +89,8 @@ const captureFlags = (cmd: Command): Command =>
     .option('-T, --title <title>', 'set the title instead of deriving one')
     .option('-t, --tag <tag...>', 'add tags')
     .option('-e, --edit', 'compose in $EDITOR')
-    .option('--no-follow', 'skip AI follow-up questions')
+    .option('--ask', 'ask an AI follow-up question, even for a one-liner')
+    .option('--no-follow', 'never ask a follow-up question')
     .option('-p, --print', 'print the saved entry');
 
 /** `ppr write` — a journal entry, kept in your words. */
@@ -85,6 +109,7 @@ export function writeCommand(): Command {
 
   captureFlags(cmd).action(async (text: string[], flags: CaptureFlags, self: Command) =>
     withVault(self, async (vault) => {
+      const composed = !text.length && !flags.edit && process.stdin.isTTY;
       const body = await resolveTextOrPrompt(text, flags);
       const entry = await vault.add({
         body,
@@ -92,10 +117,30 @@ export function writeCommand(): Command {
         ...(flags.title ? { title: flags.title } : {}),
         ...(flags.tag?.length ? { tags: flags.tag } : {}),
       });
-      await finish(vault, entry, self, flags);
+      await finish(vault, entry, self, {
+        ...flags,
+        follow: wantsFollowUps({ refused: flags.follow === false, demanded: flags.ask, composed }),
+      });
     }),
   );
   return cmd;
+}
+
+/**
+ * The quick-log path, shared with the bare `ppr "text"` form.
+ *
+ * It lives here rather than in the entry point so the two cannot drift: they
+ * were separate implementations, and `ppr + text` asked follow-up questions
+ * while `ppr "text"` did not.
+ */
+export async function quickLog(
+  vault: Vault,
+  cmd: Command,
+  body: string,
+  opts: { kind?: string } = {},
+): Promise<Entry> {
+  const entry = await vault.add({ body, kind: opts.kind ?? vault.config.capture.defaultKind });
+  return finish(vault, entry, cmd, { follow: false });
 }
 
 /** Interactive when there is nothing to read; never blocks a script. */

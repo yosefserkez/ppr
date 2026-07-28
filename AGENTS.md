@@ -46,8 +46,10 @@ problem nobody has, no dependency that saves ten lines. The current dependency l
 is `commander`, `picocolors`, and `yaml`. Adding a fourth needs a real argument.
 
 **DRY where it matters.** One definition of the filter flags. One editor spawn. One
-short-id format. Duplication of *logic* is a bug; duplication of a two-line literal
-usually is not.
+short-id format. One capture path. Duplication of *logic* is a bug; duplication of
+a two-line literal usually is not. The test is whether the copies can drift into
+disagreeing — `ppr "text"` and `ppr + text` had separate implementations and one
+of them started asking AI follow-up questions the other did not.
 
 ---
 
@@ -411,6 +413,12 @@ fix was to find a signal the user already sends: quoting. One argument is a
 note, several are an attempted command, `+` is the explicit unquoted path, and
 a bare invocation reports rather than writes. When a guess would sometimes
 destroy intent, make the intent explicit instead of improving the guess.
+
+**L18. Two ways to do one thing will drift.** `ppr "text"` and `ppr + text` are
+the same act, but the entry point had its own copy of the capture logic, so only
+one of them asked follow-up questions. Both now call `quickLog`. When adding a
+shortcut for an existing command, route it through that command rather than
+reimplementing the short version.
 
 ---
 

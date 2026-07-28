@@ -580,3 +580,17 @@ test('add and new reach the same place as write', async () => {
     assert.deepEqual(bodies.sort(), ['from the add alias', 'from the new alias']);
   });
 });
+
+test('the quoted and + capture paths produce identical entries', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['shipped the thing #work']);
+    await ppr(dir, ['+', 'shipped', 'the', 'thing', '#work']);
+
+    const [second, first] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    // Same body, kind, tags and title: one code path, so they cannot drift.
+    for (const field of ['body', 'kind', 'title']) {
+      assert.equal(second[field], first[field], `${field} differs between the two paths`);
+    }
+    assert.deepEqual(second.tags, first.tags);
+  });
+});

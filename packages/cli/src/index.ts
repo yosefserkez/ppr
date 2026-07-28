@@ -10,6 +10,7 @@ import {
   appendCommand,
   clipCommand,
   dumpCommand,
+  quickLog,
   removeCommand,
   voiceCommand,
   writeCommand,
@@ -153,11 +154,8 @@ program
         program.outputHelp();
         return;
       }
-      const entry = await vault.add({ body, kind: vault.config.capture.defaultKind });
-      const g = globals(self);
-      if (g.json) json(entryJson(entry));
-      else if (g.quiet) out(entry.id);
-      else errline(`${color.green('✓')} ${color.dim(shortId(entry.id))} ${entry.title}`);
+      // Same path as `ppr + text`, so the two can never behave differently.
+      await quickLog(vault, self, body);
     });
   });
 
