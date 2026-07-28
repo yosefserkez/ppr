@@ -74,7 +74,7 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | --- | --- |
 | `ppr "text"` | Quick log. The fastest path from thought to file. |
 | `ppr + text` | The same, without quoting. |
-| `ppr write` | A longer entry, composed at a prompt. Asks a follow-up question. |
+| `ppr write` | A longer entry, composed in `$EDITOR`. Asks a follow-up question. |
 | `ppr` | What you wrote today. Writes nothing. |
 | `ppr dump [text]` | Brain dump in, clean entry out. Reads stdin. |
 | `ppr clip <url>` | Fetches a page, extracts the content, saves what it says. |
@@ -125,10 +125,22 @@ already in a writing session. Add `--ask` to invite one onto a one-liner, or
 
 ### Composing with `ppr write`
 
+`ppr write` opens `$EDITOR` on an empty markdown buffer. Save and quit to keep
+the entry; quit without saving to discard it. ppr asks its follow-up question
+after you come back.
+
+Moving around and editing text is a solved problem, and the solution is already
+open on your machine — a note tool has no business shipping a worse version of
+your editor. The buffer has no commented instructions in it, because `#` starts
+a tag here and a git-style comment block would either eat your tags or teach you
+the wrong thing.
+
+For a couple of quick lines without leaving the terminal:
+
 ```
+$ ppr write -i
 What's on your mind?
-empty line or ctrl-d to save · ctrl-c to discard · -e for your editor
-ppr will ask a question or two when you finish
+empty line or ctrl-d to save · ctrl-c to discard
 │ rolled back the deploy
 │ the leak was in the cache
 │
@@ -137,9 +149,11 @@ ppr will ask a question or two when you finish
 ✓ zhameb rolled back the deploy
 ```
 
-Every line you type carries a `│` gutter, so it is always clear you are typing
-into ppr and not into your shell. Finish with an empty line or Ctrl-D, abandon
-with Ctrl-C, and use `ppr write -e` when you want paragraphs and your own editor.
+The `│` gutter marks ppr's own input, so it is never confused with your shell's
+prompt. Make inline the default with `ppr config set capture.compose inline`.
+
+If no editor will start, ppr says so and drops to the inline prompt rather than
+losing what you came to write.
 
 A bare `ppr` shows today's entries instead of capturing, so running it by
 accident costs nothing.

@@ -44,6 +44,11 @@ export interface Config {
     maxTags: number;
     /** Follow URLs found in a dump and attach an extract. */
     followUrls: boolean;
+    /**
+     * How `ppr write` takes a longer entry. `editor` hands you $EDITOR, where
+     * you already know how to move around; `inline` keeps the terminal prompt.
+     */
+    compose: 'editor' | 'inline';
   };
   display: {
     color: boolean;
@@ -72,6 +77,7 @@ export const DEFAULT_CONFIG: Config = {
     keepRaw: false,
     maxTags: 5,
     followUrls: true,
+    compose: 'editor',
   },
   display: { color: true, listLimit: 20, interactive: true },
 };
@@ -181,6 +187,12 @@ function coerce(raw: string, current: unknown): unknown {
 const PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULTS));
 
 export function validateConfig(config: Config): Config {
+  if (config.capture.compose !== 'editor' && config.capture.compose !== 'inline') {
+    throw invalid(
+      `Unknown compose mode: ${config.capture.compose}`,
+      'Pick one of: editor, inline',
+    );
+  }
   if (!PROVIDERS.has(config.ai.provider)) {
     throw invalid(
       `Unknown AI provider: ${config.ai.provider}`,

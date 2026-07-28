@@ -459,6 +459,9 @@ actually run the command you changed. Report what you verified and what you did 
 - Do not add a config option to avoid making a decision.
 - Do not let the CLI accumulate logic that belongs in core — if a future mobile app
   would need it, it is core's job.
+- Do not build a text editor. `ppr write` hands you `$EDITOR`, where you already
+  know how to move around; cursor movement, wrapping, and undo are solved and
+  reimplementing them badly is worse than not having them.
 - Do not add mouse support to the terminal UI without a strong reason: capturing
   mouse events breaks native text selection, which matters more in a note tool than
   click-to-focus does.

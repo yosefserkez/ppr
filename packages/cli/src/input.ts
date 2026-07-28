@@ -112,6 +112,17 @@ export function spawnEditorOn(file: string): Promise<number> {
 const editorCommand = (): string =>
   process.env.PPR_EDITOR || process.env.VISUAL || process.env.EDITOR || 'vi';
 
+/** The editor ppr will launch, for messages. */
+export const editorName = (): string => editorCommand().split(/\s+/)[0]!;
+
+/**
+ * Composes an entry in $EDITOR.
+ *
+ * The buffer is a plain, empty `.md` file — no commented instructions, because
+ * `#` starts a tag in ppr and a git-style comment block would either eat them
+ * or teach the wrong thing. Quitting without saving leaves it empty, which is
+ * how you cancel.
+ */
 export async function openEditor(initial = '', extension = 'md'): Promise<string> {
   if (!process.stdin.isTTY) {
     throw new PprError('EINVALID', 'No text given and no terminal to open an editor in');
@@ -126,7 +137,13 @@ export async function openEditor(initial = '', extension = 'md'): Promise<string
       child.on('error', reject);
       child.on('close', (c) => resolvePromise(c ?? 0));
     });
-    if (code !== 0) throw new PprError('EEXTERNAL', `Editor exited with code ${code}`);
+    if (code !== 0) {
+      throw new PprError(
+        'EEXTERNAL',
+        `${cmd} exited with code ${code}`,
+        'Nothing was saved. Set a different editor with $EDITOR or $PPR_EDITOR.',
+      );
+    }
     return await readFile(file, 'utf8');
   } finally {
     await rm(dir, { recursive: true, force: true });

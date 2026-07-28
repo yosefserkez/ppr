@@ -75,3 +75,10 @@ test('config flattens to dotted keys for display', () => {
   assert.equal(flat['ai.provider'], 'none');
   assert.equal(flat['capture.distill'], true);
 });
+
+test('compose mode is validated like any other setting', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  assert.equal(config.capture.compose, 'editor', 'the editor is the default');
+  assert.equal(setPath(config, 'capture.compose', 'inline').capture.compose, 'inline');
+  assert.throws(() => setPath(config, 'capture.compose', 'vim'), /Unknown compose mode/);
+});

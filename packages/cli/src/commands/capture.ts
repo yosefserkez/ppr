@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { type Entry, type Vault, PprError } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
 import { globals, withVault } from '../context.js';
-import { confirm, promptLine, promptMultiline, resolveText } from '../input.js';
+import { confirm, editorName, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
 
 interface CaptureFlags {
@@ -13,6 +13,7 @@ interface CaptureFlags {
   tag?: string[];
   kind?: string;
   edit?: boolean;
+  inline?: boolean;
   /** Resolved decision, not the raw flag — see `wantsFollowUps`. */
   follow?: boolean;
   ask?: boolean;
@@ -88,7 +89,8 @@ const captureFlags = (cmd: Command): Command =>
   cmd
     .option('-T, --title <title>', 'set the title instead of deriving one')
     .option('-t, --tag <tag...>', 'add tags')
-    .option('-e, --edit', 'compose in $EDITOR')
+    .option('-e, --edit', 'compose in $EDITOR (the default for `ppr write`)')
+    .option('-i, --inline', 'compose at the terminal prompt instead of $EDITOR')
     .option('--ask', 'ask an AI follow-up question, even for a one-liner')
     .option('--no-follow', 'never ask a follow-up question')
     .option('-p, --print', 'print the saved entry');
@@ -109,10 +111,14 @@ export function writeCommand(): Command {
 
   captureFlags(cmd).action(async (text: string[], flags: CaptureFlags, self: Command) =>
     withVault(self, async (vault) => {
-      const composed = !text.length && !flags.edit && process.stdin.isTTY;
+      // Composing is composing, whether it happened in $EDITOR or at the prompt.
+      const composed = !text.length && process.stdin.isTTY;
       const willAsk =
         composed && vault.hasAI && wantsFollowUps({ refused: flags.follow === false, demanded: flags.ask, composed });
-      const body = await resolveTextOrPrompt(text, flags, { willAsk });
+      const body = await resolveTextOrPrompt(text, flags, {
+        willAsk,
+        compose: vault.config.capture.compose,
+      });
       const entry = await vault.add({
         body,
         kind: flags.kind ?? vault.config.capture.defaultKind,
@@ -145,23 +151,53 @@ export async function quickLog(
   return finish(vault, entry, cmd, { follow: false });
 }
 
-/** Interactive when there is nothing to read; never blocks a script. */
+/**
+ * Where a longer entry gets composed.
+ *
+ * $EDITOR by default, because moving around and editing text is a solved
+ * problem and the solution is already open on your machine. Rebuilding cursor
+ * movement, wrapping, and undo inside a note tool would be a worse version of
+ * something you know better than we could teach. `--inline` keeps the terminal
+ * prompt for a couple of quick lines, and is the automatic fallback when no
+ * editor will start.
+ */
 async function resolveTextOrPrompt(
   text: string[] | undefined,
   flags: CaptureFlags,
-  session: { willAsk?: boolean } = {},
+  session: { willAsk?: boolean; compose?: 'editor' | 'inline' } = {},
 ): Promise<string> {
   const hasArgs = Boolean(text?.length);
-  if (!hasArgs && !flags.edit && process.stdin.isTTY) {
-    const body = await promptMultiline(color.bold("What's on your mind?"), [
-      'empty line or ctrl-d to save · ctrl-c to discard · -e for your editor',
-      ...(session.willAsk ? ['ppr will ask a question or two when you finish'] : []),
-    ]);
-    if (!body) throw new PprError('EINVALID', 'Nothing written');
+  const useEditor = flags.edit || (!flags.inline && session.compose !== 'inline');
+
+  if (!hasArgs && process.stdin.isTTY && useEditor) {
+    errline(color.dim(`Opening ${editorName()} — save and quit to keep it, quit without saving to discard.`));
+    let written: string;
+    try {
+      written = await openEditor();
+    } catch (err) {
+      // A missing or broken editor should cost you the note, not the session.
+      if (flags.edit) throw err;
+      errline(color.yellow(`${(err as Error).message} — falling back to the inline prompt.`));
+      return composeInline(session);
+    }
+    const body = written.trim();
+    if (!body) throw new PprError('EINVALID', 'Nothing written — the editor buffer was empty');
     return body;
   }
+
+  if (!hasArgs && process.stdin.isTTY) return composeInline(session);
+
   const body = await resolveText(text, flags.edit ? { edit: true } : {});
   if (!body) throw new PprError('EINVALID', 'Nothing to save');
+  return body;
+}
+
+async function composeInline(session: { willAsk?: boolean }): Promise<string> {
+  const body = await promptMultiline(color.bold("What's on your mind?"), [
+    'empty line or ctrl-d to save · ctrl-c to discard',
+    ...(session.willAsk ? ['ppr will ask a question or two when you finish'] : []),
+  ]);
+  if (!body) throw new PprError('EINVALID', 'Nothing written');
   return body;
 }
 
