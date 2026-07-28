@@ -23,6 +23,11 @@ export interface TranscribeConfig {
   baseUrl?: string;
   apiKeyEnv?: string;
   language?: string;
+  /**
+   * Input device to record from: an avfoundation index, a device name, or
+   * `default` to follow the system setting. Index 0 is a trap — see `record()`.
+   */
+  device?: string;
 }
 
 export interface Config {
@@ -100,6 +105,7 @@ export const OPTIONAL_KEYS = [
   'transcribe.baseUrl',
   'transcribe.apiKeyEnv',
   'transcribe.language',
+  'transcribe.device',
   'editor',
 ] as const;
 

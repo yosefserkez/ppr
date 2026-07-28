@@ -79,3 +79,19 @@ test('a non-WAV file is unreadable rather than wrongly silent', async () => {
 test('a missing file returns null instead of throwing', async () => {
   assert.equal(await analyzeWav('/nonexistent/nope.wav'), null);
 });
+
+test('a live but quiet room is not silent, only quiet', () => {
+  // Measured room tone from a working microphone sits here: whisper would
+  // hallucinate a word from it, but the device is fine and speech would register.
+  return withFile(wav(tone(2, 0.006)), async (path) => {
+    const level = await analyzeWav(path);
+    assert.equal(level.silent, false, 'the device is working');
+    assert.equal(level.quiet, true, 'but nothing was said');
+  });
+});
+
+test('speech is neither silent nor quiet', async () => {
+  const level = await withFile(wav(tone(2, 0.2)), analyzeWav);
+  assert.equal(level.silent, false);
+  assert.equal(level.quiet, false);
+});

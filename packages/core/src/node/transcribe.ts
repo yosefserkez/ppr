@@ -147,10 +147,16 @@ export interface Recording {
 }
 
 /**
- * Records from the default input device using whatever the machine already has.
+ * Records from the system's default input, or a device the user has chosen.
  * `sox` first (clean 16 kHz WAV, exactly what whisper wants), then ffmpeg.
+ *
+ * The device matters more than it looks. avfoundation index 0 is *not* the
+ * microphone — it is whatever virtual device sorted first, and on any machine
+ * with Zoom installed that is `ZoomAudioDevice`, which records flawless
+ * silence. `default` follows the system setting, which is what a person means
+ * when they say "my microphone".
  */
-export async function record(): Promise<Recording> {
+export async function record(opts: { device?: string } = {}): Promise<Recording> {
   const path = tmpFile('wav');
   const sox = await which('rec');
   const ffmpeg = sox ? null : await which('ffmpeg');
@@ -163,11 +169,18 @@ export async function record(): Promise<Recording> {
     );
   }
 
+  const device = opts.device?.trim() || 'default';
   const child = sox
-    ? spawn('rec', ['-q', '-c', '1', '-r', '16000', '-b', '16', path], { stdio: 'ignore' })
-    : spawn('ffmpeg', ['-nostdin', '-loglevel', 'error', '-f', inputFormat(), '-i', ':0', '-ar', '16000', '-ac', '1', path], {
+    ? spawn('rec', ['-q', '-c', '1', '-r', '16000', '-b', '16', path], {
         stdio: 'ignore',
-      });
+        // sox picks its input from the environment rather than an argument.
+        env: device === 'default' ? process.env : { ...process.env, AUDIODEV: device },
+      })
+    : spawn(
+        'ffmpeg',
+        ['-nostdin', '-loglevel', 'error', '-f', inputFormat(), '-i', `:${device}`, '-ar', '16000', '-ac', '1', path],
+        { stdio: 'ignore' },
+      );
 
   const done = new Promise<void>((resolvePromise) => child.on('close', () => resolvePromise()));
 

@@ -10,9 +10,15 @@ import {
   type Config,
 } from '@ppr/core';
 import {
+  DEFAULT_DEVICE,
   downloadFile,
   formatBytes,
   initVault,
+  listInputDevices,
+  micPermission,
+  openMicSettings,
+  requestMicPermission,
+  responsibleApp,
   loadConfig,
   loadSecrets,
   modelsDir,
@@ -428,30 +434,104 @@ const whisperModelCheck: Check = {
   },
 };
 
+const micPermissionCheck: Check = {
+  id: 'voice.permission',
+  label: 'Mic permission',
+  applies: (ctx) => process.platform === 'darwin' && ctx.config.transcribe.provider !== 'none',
+  async inspect() {
+    const status = await micPermission();
+    switch (status) {
+      case 'authorized':
+        return ok(`${responsibleApp()} is allowed`);
+      case 'denied':
+        return missing(`${responsibleApp()} is blocked`, 'open System Settings › Privacy › Microphone');
+      case 'restricted':
+        return missing('blocked by policy', 'ask whoever manages this Mac');
+      case 'notDetermined':
+        return warn('not asked yet', 'ppr setup voice.permission');
+      default:
+        return warn('cannot tell (needs swiftc)', 'xcode-select --install');
+    }
+  },
+  async repair() {
+    const status = await micPermission();
+    if (status === 'authorized') {
+      out(`  ${color.dim(`${responsibleApp()} already has access`)}`);
+      return false;
+    }
+    if (status === 'notDetermined') {
+      out(color.dim(`  Asking macOS — approve the prompt for ${responsibleApp()}.`));
+      const result = await requestMicPermission();
+      if (result === 'authorized') {
+        out(`  ${color.green('✓')} granted`);
+        return true;
+      }
+      errline(color.yellow(`  Not granted (${result}).`));
+    }
+    // Once denied, nothing but the user in System Settings can change it.
+    out(color.dim(`  Only you can change this: allow ${responsibleApp()} under Microphone.`));
+    if (await confirm('  Open System Settings there now?', true)) await openMicSettings();
+    return false;
+  },
+};
+
 const recorderCheck: Check = {
   id: 'voice.recorder',
   label: 'Microphone',
   applies: (ctx) => ctx.config.transcribe.provider !== 'none',
-  async inspect() {
+  async inspect(ctx) {
     const tool = (await which('rec')) ?? (await which('ffmpeg'));
     if (!tool) return missing('no recorder (sox or ffmpeg)', 'brew install sox');
-    const note =
-      process.platform === 'darwin'
-        ? ' — grant your terminal microphone access in System Settings › Privacy'
-        : '';
-    return ok(`${tool}${note}`);
+
+    const chosen = ctx.config.transcribe.device;
+    const devices = await listInputDevices();
+    const named = devices.find((d) => d.id === chosen || d.name === chosen);
+
+    // A virtual device records perfect silence forever. Worth flagging loudly.
+    if (named?.virtual) {
+      return warn(
+        `set to ${named.name}, which is a virtual device and records silence`,
+        'ppr setup voice.recorder',
+      );
+    }
+    if (chosen && chosen !== DEFAULT_DEVICE) return ok(`${named?.name ?? chosen}`);
+    return ok(`system default${devices.length ? ` (${devices.length} inputs)` : ''}`);
   },
-  async repair() {
+  async repair(ctx) {
     const found = (await which('rec')) ?? (await which('ffmpeg'));
     if (!found) return offerInstall('sox', 'brew install sox');
-
     out(`  ${color.dim(`using ${found}`)}`);
+
+    let changed = false;
+    const devices = await listInputDevices();
+    if (devices.length) {
+      const choices = [
+        { value: DEFAULT_DEVICE, label: 'default', hint: 'follow the system input setting' },
+        ...devices.map((device) => ({
+          value: device.id,
+          label: device.name,
+          hint: device.virtual ? 'virtual device — records silence' : `input ${device.id}`,
+        })),
+      ];
+      const current = choices.findIndex((c) => c.value === (ctx.config.transcribe.device ?? DEFAULT_DEVICE));
+      const picked = await select({
+        title: 'Input device',
+        choices,
+        initial: Math.max(0, current),
+      });
+      await writeSetting(ctx.root, 'transcribe.device', picked.value);
+      out(color.dim(`  → ppr config set transcribe.device ${picked.value}`));
+      await ctx.reload();
+      changed = true;
+    }
+
     // Permission problems are invisible until you record: the tool succeeds and
     // captures silence. Three seconds of measurement beats a mystery later.
-    if (!(await confirm('  Test the microphone (records 3 seconds)?', true))) return false;
+    if (!(await confirm('  Test it (records 3 seconds)?', true))) return changed;
 
     const { analyzeWav, record } = await import('@ppr/core/node');
-    const recording = await record();
+    const device = ctx.config.transcribe.device;
+    const recording = await record(device ? { device } : {});
     out(color.red('  ● say something …'));
     await new Promise((done) => setTimeout(done, 3000));
     const file = await recording.stop();
@@ -459,21 +539,26 @@ const recorderCheck: Check = {
     const level = await analyzeWav(file);
     if (!level) {
       errline(color.yellow(`  Could not read the test recording (${file})`));
-      return false;
+      return changed;
     }
     if (level.silent) {
-      errline(color.yellow('  Silence — the microphone captured nothing.'));
-      if (process.platform === 'darwin') {
-        errline(
-          color.dim('  Give your terminal microphone access:') +
-            '\n' +
-            color.dim('  System Settings › Privacy & Security › Microphone'),
-        );
-      }
-      return false;
+      errline(color.yellow('  Silence — that input captured nothing.'));
+      const status = process.platform === 'darwin' ? await micPermission() : 'unknown';
+      errline(
+        color.dim(
+          status === 'authorized' || status === 'unknown'
+            ? '  Permission is fine, so it is the device: pick a different one above.'
+            : `  ${responsibleApp()} does not have microphone access — run \`ppr setup voice.permission\``,
+        ),
+      );
+      return changed;
+    }
+    if (level.quiet) {
+      out(color.yellow(`  Very quiet (peak ${Math.round(level.peak * 100)}%) — speak up or move closer.`));
+      return changed;
     }
     out(`  ${color.green('✓')} heard you ${color.dim(`(peak ${Math.round(level.peak * 100)}%)`)}`);
-    return false;
+    return changed;
   },
 };
 
@@ -487,6 +572,7 @@ export const CHECKS: Check[] = [
   voiceCheck,
   whisperBinaryCheck,
   whisperModelCheck,
+  micPermissionCheck,
   recorderCheck,
 ];
 

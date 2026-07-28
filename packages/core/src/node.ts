@@ -27,6 +27,19 @@ export { commandProvider } from './node/command-provider.js';
 export { createTranscriber, record, type Recording } from './node/transcribe.js';
 export { downloadFile, formatBytes, modelsDir, type DownloadProgress } from './node/download.js';
 export { analyzeWav, type AudioLevel } from './node/audio.js';
+export { ensureSwiftHelper, type SwiftHelper } from './node/swift.js';
+export {
+  DEFAULT_DEVICE,
+  listInputDevices,
+  parseDeviceList,
+  micPermission,
+  micPermissionError,
+  openMicSettings,
+  requestMicPermission,
+  responsibleApp,
+  type AudioDevice,
+  type MicPermission,
+} from './node/microphone.js';
 
 /**
  * Defers construction until the first generate call, so a missing API key is

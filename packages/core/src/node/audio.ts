@@ -18,8 +18,10 @@ export interface AudioLevel {
   /** Root mean square over the file, 0–1. Better than peak for "is this speech". */
   rms: number;
   seconds: number;
-  /** True when there is no plausible speech in here. */
+  /** No signal at all: a dead or wrong input device. */
   silent: boolean;
+  /** Live input, but nothing loud enough to be speech. */
+  quiet: boolean;
 }
 
 /**
@@ -32,6 +34,11 @@ export interface AudioLevel {
  */
 const SILENT_RMS = 0.002;
 const SILENT_PEAK = 0.02;
+/**
+ * Between the two thresholds sits a live microphone in a quiet room: measured
+ * room tone is around 0.004, speech around 0.14. Worth a warning, not a refusal.
+ */
+const QUIET_RMS = 0.015;
 /** Enough samples for a stable measurement without reading a whole long file. */
 const MAX_SAMPLES = 200_000;
 
@@ -106,6 +113,7 @@ export async function analyzeWav(path: string): Promise<AudioLevel | null> {
       rms,
       seconds: frames / channels / sampleRate,
       silent: rms < SILENT_RMS && peak < SILENT_PEAK,
+      quiet: rms < QUIET_RMS,
     };
   } finally {
     await handle.close();

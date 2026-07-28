@@ -1,10 +1,8 @@
-import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { AIConfig } from '../config.js';
 import { PprError } from '../errors.js';
 import type { AIProvider } from '../ports.js';
-import { run, which } from './exec.js';
+import { run } from './exec.js';
+import { ensureSwiftHelper } from './swift.js';
 
 /**
  * Apple's on-device Foundation Models, reached through a tiny Swift shim that
@@ -55,49 +53,13 @@ if #available(macOS 26.0, *) {
 }
 `;
 
-const cacheDir = (): string =>
-  join(process.env.XDG_CACHE_HOME || join(process.env.HOME || homedir(), '.cache'), 'ppr');
-
-const BINARY = 'ppr-afm';
-
-async function isFresh(binPath: string, sourcePath: string): Promise<boolean> {
-  const [bin, src] = await Promise.all([stat(binPath).catch(() => null), stat(sourcePath).catch(() => null)]);
-  return Boolean(bin && src && bin.mtimeMs >= src.mtimeMs);
-}
-
-/** Compiles the shim on first use. Subsequent calls just exec the binary. */
-export async function ensureAppleShim(): Promise<string> {
-  if (process.platform !== 'darwin') {
-    throw new PprError('EEXTERNAL', 'The apple provider only runs on macOS');
-  }
-  const dir = cacheDir();
-  const sourcePath = join(dir, 'ppr-afm.swift');
-  const binPath = join(dir, BINARY);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(sourcePath, SHIM_SOURCE);
-  if (await isFresh(binPath, sourcePath)) return binPath;
-
-  if (!(await which('swiftc'))) {
-    throw new PprError(
-      'EEXTERNAL',
-      'swiftc not found, so the on-device Apple model cannot be reached',
-      'Install Xcode command line tools: xcode-select --install',
-    );
-  }
-
-  const { code, stderr } = await run('swiftc', ['-O', '-o', binPath, sourcePath], {
-    timeoutMs: 180_000,
+/** Compiles on first use through the shared Swift helper builder. */
+export const ensureAppleShim = (): Promise<string> =>
+  ensureSwiftHelper({
+    name: 'ppr-afm',
+    source: SHIM_SOURCE,
+    purpose: 'the on-device Apple model',
   });
-  if (code !== 0) {
-    throw new PprError(
-      'EEXTERNAL',
-      `Could not build the Apple Foundation Models helper:\n${stderr.trim().slice(0, 600)}`,
-      'This needs macOS 26+ with the matching SDK. Try `ppr ai set provider ollama` instead.',
-    );
-  }
-  return binPath;
-}
 
 export function appleProvider(ai: AIConfig): AIProvider {
   let binPath: Promise<string> | undefined;

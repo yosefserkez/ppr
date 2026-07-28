@@ -234,12 +234,25 @@ and `command` backends are also available.
 transcription fails afterwards it tells you where your audio is rather than
 discarding it.
 
-**If transcription keeps returning a single stray word like "you", the
-microphone is muted, not the model.** Whisper hallucinates on silence rather
-than failing, so ppr measures the signal and says so instead of filing the
-result as a note. `ppr setup voice.recorder` records three seconds and tells you
-whether anything was heard — on macOS the usual cause is your terminal lacking
-microphone access in System Settings › Privacy & Security.
+**If transcription keeps returning a single stray word like "you", nothing was
+recorded.** Whisper hallucinates on silence rather than failing, so ppr measures
+the signal first and refuses instead of filing the result as a note.
+
+Two things cause it, and ppr can tell them apart:
+
+- **The wrong input device**, which is the common one. macOS lists virtual
+  inputs — Zoom, Loopback, BlackHole — beside real microphones, and they often
+  sort first. Recording from one produces perfect, permanent silence. ppr
+  records from the *system default* and flags a virtual device if you pick one.
+- **Permission**, where only the system can answer. `ppr setup voice.permission`
+  asks macOS directly: if the decision is still open it triggers the prompt, and
+  if it was denied it opens the right Settings pane, since nothing else can undo that.
+
+```bash
+ppr setup voice.recorder    # pick an input, then record 3s and measure it
+ppr setup voice.permission  # ask macOS for access
+ppr config set transcribe.device 1   # or name it yourself
+```
 
 `--no-ai` skips model *generation*, not transcription — `ppr --no-ai voice` still
 records and transcribes, it just stores your words as they came out.

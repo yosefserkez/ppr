@@ -376,11 +376,23 @@ themselves with "already configured, nothing to do" — so answering *yes* to
 runs, consent has been given; the guard belongs in whether to *offer* the step,
 never in whether to honour it.
 
-**L14. Whisper hallucinates on silence rather than failing.** A muted
-microphone transcribes as "you" or "Thank you." and gets filed as a note.
-Measuring the signal (`analyzeWav`) is deterministic where guessing from the
-transcript is not, and it points at the real cause — on macOS, terminal
-microphone permission.
+**L14. Whisper hallucinates on silence rather than failing.** A recording of
+nothing transcribes as "you" or "Thank you." and gets filed as a note. Measuring
+the signal (`analyzeWav`) is deterministic where guessing from the transcript is
+not.
+
+**L15. Audio device index 0 is not the microphone.** `record()` used
+avfoundation `:0`, and on any Mac with Zoom installed index 0 is
+`ZoomAudioDevice` — a virtual input that records flawless silence. Record from
+`default`, which follows the system setting, and flag virtual devices when the
+user picks one. The lesson generalises: an enumerated index is whatever sorted
+first that day, not the thing you meant.
+
+**L16. Diagnose before you blame.** The silent recordings looked like a
+permission problem and were reported as one; permission was granted the whole
+time. Two failures with one symptom need a check that distinguishes them —
+`micPermission()` asks the system rather than guessing, so the hint names the
+cause that actually applies.
 
 ---
 

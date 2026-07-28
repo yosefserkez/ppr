@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type Entry, type Vault, PprError } from '@ppr/core';
-import { analyzeWav, record, which } from '@ppr/core/node';
+import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
 import { globals, withVault } from '../context.js';
 import { confirm, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -184,7 +184,8 @@ export function voiceCommand(): Command {
         let recorded = false;
         if (!path) {
           if (!process.stdin.isTTY) throw new PprError('EINVALID', 'No audio file given');
-          const recording = await record();
+          const device = vault.config.transcribe.device;
+          const recording = await record(device ? { device } : {});
           errline(color.red('● recording') + color.dim(' — press Enter to stop'));
           await promptLine('');
           path = await recording.stop();
@@ -197,17 +198,13 @@ export function voiceCommand(): Command {
         const level = await analyzeWav(path);
         if (level?.silent) {
           errline(color.yellow(`That recording is silent (${level.seconds.toFixed(1)}s, no signal).`));
-          if (recorded) {
-            errline(color.dim(`Audio kept at ${path}`));
-            throw new PprError(
-              'EEXTERNAL',
-              'The microphone captured nothing',
-              process.platform === 'darwin'
-                ? 'Give your terminal microphone access: System Settings › Privacy & Security › Microphone'
-                : 'Check the input device your recorder is using',
-            );
-          }
-          throw new PprError('EINVALID', `${path} has no audible signal`);
+          if (!recorded) throw new PprError('EINVALID', `${path} has no audible signal`);
+
+          errline(color.dim(`Audio kept at ${path}`));
+          throw new PprError('EEXTERNAL', 'The input captured nothing', await silenceHint());
+        }
+        if (level?.quiet && !g.quiet) {
+          errline(color.dim(`Input level is low (peak ${Math.round(level.peak * 100)}%).`));
         }
 
         if (!g.quiet && !g.json) errline(color.dim('Transcribing …'));
@@ -242,6 +239,23 @@ export function voiceCommand(): Command {
       }),
   );
   return cmd;
+}
+
+/**
+ * Names the likely cause of a silent recording.
+ *
+ * Permission is the famous one, but the common one is the device: macOS lists
+ * virtual inputs (Zoom, Loopback) next to real microphones, and recording from
+ * one yields perfect silence. Ask the system which it is rather than guessing.
+ */
+async function silenceHint(): Promise<string> {
+  if (process.platform !== 'darwin') return 'Check which input device your recorder is using';
+  const status = await micPermission();
+  if (status === 'denied' || status === 'restricted') {
+    return `Allow ${responsibleApp()} in System Settings › Privacy & Security › Microphone`;
+  }
+  if (status === 'notDetermined') return 'Run `ppr setup voice.permission` to ask for access';
+  return 'Wrong input device — run `ppr setup voice.recorder` to pick one and test it';
 }
 
 /**
