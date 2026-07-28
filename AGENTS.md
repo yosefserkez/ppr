@@ -370,6 +370,18 @@ model file was missing — and the recording died with the error. Check everythi
 the operation needs before the expensive or irreversible part, and if it fails
 afterwards anyway, tell the user where their data is.
 
+**L13. A confirmed action must not second-guess the user.** Repairs guarded
+themselves with "already configured, nothing to do" — so answering *yes* to
+"Change it?" printed "already have it" and changed nothing. By the time a repair
+runs, consent has been given; the guard belongs in whether to *offer* the step,
+never in whether to honour it.
+
+**L14. Whisper hallucinates on silence rather than failing.** A muted
+microphone transcribes as "you" or "Thank you." and gets filed as a note.
+Measuring the signal (`analyzeWav`) is deterministic where guessing from the
+transcript is not, and it points at the real cause — on macOS, terminal
+microphone permission.
+
 ---
 
 ## 10. Workflow

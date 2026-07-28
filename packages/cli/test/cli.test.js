@@ -387,3 +387,68 @@ test('voice keeps the audio when transcription fails', async () => {
     assert.doesNotMatch(stderr, /node:internal/);
   });
 });
+
+test('setup lists its steps so one can be run on its own', async () => {
+  await withVault(async (dir) => {
+    const { code, stdout } = await ppr(dir, ['setup', '--list']);
+    assert.equal(code, 0);
+    for (const id of ['vault', 'ai', 'voice.model']) assert.match(stdout, new RegExp(id));
+
+    const listed = JSON.parse((await ppr(dir, ['setup', '--list', '--json'])).stdout);
+    assert.ok(listed.every((s) => s.id && s.label));
+  });
+});
+
+test('a step id narrows the run to that family', async () => {
+  await withVault(async (dir) => {
+    const { checks } = JSON.parse((await ppr(dir, ['doctor', 'voice', '--json'])).stdout);
+    const ids = checks.map((c) => c.id);
+    assert.ok(ids.length && ids.every((id) => id === 'voice' || id.startsWith('voice.')));
+    assert.ok(!ids.includes('vault'), 'unrelated steps stay out of the way');
+
+    const one = JSON.parse((await ppr(dir, ['setup', 'ai.key', '--json'])).stdout);
+    assert.deepEqual(one.checks.map((c) => c.id), ['ai.key']);
+  });
+});
+
+test('a step name that does not exist lists the ones that do', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['setup', 'nonsense']);
+    assert.equal(code, 2);
+    assert.match(stderr, /No setup step matches/);
+    assert.match(stderr, /voice\.model/, 'the error names the valid steps');
+  });
+});
+
+test('a silent recording is diagnosed instead of transcribed into noise', async () => {
+  await withVault(async (dir) => {
+    // 16-bit mono WAV of pure digital silence.
+    const samples = 16_000;
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + samples * 2, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(16_000, 24);
+    header.writeUInt32LE(32_000, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(samples * 2, 40);
+
+    const file = join(dir, 'silence.wav');
+    await writeFile(file, Buffer.concat([header, Buffer.alloc(samples * 2)]));
+
+    await ppr(dir, ['config', 'set', 'transcribe.provider', 'command']);
+    await ppr(dir, ['config', 'set', 'transcribe.command', 'echo you']);
+
+    const { code, stderr } = await ppr(dir, ['voice', file, '--transcript-only']);
+    assert.notEqual(code, 0, 'silence must not become an entry');
+    assert.match(stderr, /silent/i);
+    // The transcriber was never reached, so its hallucination never surfaced.
+    assert.doesNotMatch(stderr, /^you$/m);
+  });
+});

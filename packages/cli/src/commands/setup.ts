@@ -1,12 +1,15 @@
 import { Command } from 'commander';
+import { PprError } from '@ppr/core';
 import { findVault } from '@ppr/core/node';
 import { globals } from '../context.js';
 import { confirm } from '../input.js';
 import { Keyboard } from '../ui/keyboard.js';
 import { color, json, out, errline, table } from '../render.js';
 import {
+  CHECKS,
   applicable,
   checkContext,
+  inspect,
   inspectAll,
   type Check,
   type CheckContext,
@@ -82,18 +85,52 @@ async function runStep(
   return 'fixed';
 }
 
+/**
+ * Narrows the walkthrough to the steps the user named.
+ *
+ * Ids are dotted, so a prefix selects a family: `voice` picks up `voice.binary`,
+ * `voice.model`, and `voice.recorder` — which is how you fix one thing without
+ * sitting through the whole tour.
+ */
+function matchSteps(names: string[], available: Check[]): Check[] {
+  const wanted = names.map((n) => n.toLowerCase());
+  const picked = available.filter((check) =>
+    wanted.some((name) => check.id === name || check.id.startsWith(`${name}.`)),
+  );
+  if (picked.length) return picked;
+
+  throw new PprError(
+    'EINVALID',
+    `No setup step matches: ${names.join(', ')}`,
+    `Steps: ${available.map((c) => c.id).join(', ')}`,
+  );
+}
+
 export function setupCommand(): Command {
   return new Command('setup')
     .description('guided setup: configure, install, and download what ppr needs')
+    .argument('[step...]', 'only these steps, e.g. `voice` or `ai.key`')
     .option('--all', 'walk every check, not just the main steps')
-    .action(async (flags: { all?: boolean }, self: Command) => {
+    .option('--list', 'list the step ids and exit')
+    .action(async (steps: string[], flags: { all?: boolean; list?: boolean }, self: Command) => {
       const g = globals(self);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
       const ctx = await checkContext(found.root, found.exists);
 
+      if (flags.list) {
+        const rows = CHECKS.map((check) => [
+          check.id,
+          color.dim(check.repair ? check.label : `${check.label} (report only)`),
+        ]) as Array<[string, string]>;
+        return g.json ? json(CHECKS.map((c) => ({ id: c.id, label: c.label, repairable: Boolean(c.repair) }))) : out(table(rows));
+      }
+
+      // Validate names before anything else, so a typo is caught on every path.
+      const named = steps.length ? matchSteps(steps, CHECKS) : null;
+
       // No terminal? Show the plan instead of hanging on a prompt nobody sees.
       if (!Keyboard.usable() || g.json) {
-        const reports = await inspectAll(ctx);
+        const reports = await inspect(ctx, named ?? undefined);
         if (g.json) return json(reportJson(reports, ctx.root));
         out(color.bold('ppr setup needs a terminal. Here is what it would do:\n'));
         printReport(reports);
@@ -107,12 +144,19 @@ export function setupCommand(): Command {
       // Recomputed each turn: a repair changes which checks apply — picking
       // ollama adds an Ollama step, picking whisper adds a model download — and
       // the walkthrough should pick those up in registry order, not append them.
-      const wanted = (check: Check) => flags.all || check.guided || Boolean(check.repair);
+      const wanted = (check: Check) =>
+        named
+          ? named.some((c) => c.id === check.id)
+          : flags.all || check.guided || Boolean(check.repair);
       const done = new Set<string>();
       let fixed = 0;
 
+      // Named steps are run whether or not they currently apply, so
+      // `ppr setup voice.model` works before whisper has been chosen.
+      const pool = () => (named ? CHECKS : applicable(ctx));
+
       for (;;) {
-        const pending = applicable(ctx).filter((c) => wanted(c) && !done.has(c.id));
+        const pending = pool().filter((c) => wanted(c) && !done.has(c.id));
         const next = pending[0];
         if (!next) break;
         done.add(next.id);
@@ -130,10 +174,12 @@ export function setupCommand(): Command {
           : color.green('All set.'),
       );
       if (fixed) out(color.dim(`Changed ${fixed} setting${fixed === 1 ? '' : 's'}.`));
+      if (steps.length) return;
       out('');
       out(table([
         ['ppr "first note"', color.dim('write something')],
         ['ppr ls', color.dim('browse with the keyboard')],
+        ['ppr setup <step>', color.dim('change one thing later')],
         ['ppr doctor', color.dim('check this again any time')],
       ]));
     });
@@ -142,14 +188,17 @@ export function setupCommand(): Command {
 export function doctorCommand(): Command {
   return new Command('doctor')
     .description('check the environment and report anything that needs attention')
+    .argument('[step...]', 'only report or fix these steps')
     .option('--fix', 'offer to repair whatever is broken')
-    .action(async (flags: { fix?: boolean }, self: Command) => {
+    .action(async (steps: string[], flags: { fix?: boolean }, self: Command) => {
       const g = globals(self);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
       const ctx = await checkContext(found.root, found.exists);
 
+      const scope = (list: Check[]) => (steps.length ? matchSteps(steps, CHECKS) : list);
+
       if (flags.fix && Keyboard.usable() && !g.json) {
-        for (const check of applicable(ctx)) {
+        for (const check of scope(applicable(ctx))) {
           const finding = await check.inspect(ctx);
           if (finding.status === 'ok' || !check.repair) continue;
           out('');
@@ -159,7 +208,7 @@ export function doctorCommand(): Command {
         out('');
       }
 
-      const reports = await inspectAll(ctx);
+      const reports = await inspect(ctx, steps.length ? scope(CHECKS) : undefined);
       if (g.json) return json(reportJson(reports, ctx.root));
       printReport(reports);
       if (!flags.fix && reports.some((r) => r.status !== 'ok' && r.repairable)) {

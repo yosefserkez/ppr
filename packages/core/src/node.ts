@@ -26,6 +26,7 @@ export { appleProvider, ensureAppleShim } from './node/apple.js';
 export { commandProvider } from './node/command-provider.js';
 export { createTranscriber, record, type Recording } from './node/transcribe.js';
 export { downloadFile, formatBytes, modelsDir, type DownloadProgress } from './node/download.js';
+export { analyzeWav, type AudioLevel } from './node/audio.js';
 
 /**
  * Defers construction until the first generate call, so a missing API key is

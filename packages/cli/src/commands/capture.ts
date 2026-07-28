@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type Entry, type Vault, PprError } from '@ppr/core';
-import { record, which } from '@ppr/core/node';
+import { analyzeWav, record, which } from '@ppr/core/node';
 import { globals, withVault } from '../context.js';
 import { confirm, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -191,6 +191,25 @@ export function voiceCommand(): Command {
           recorded = true;
         }
 
+        // Whisper hallucinates on silence rather than failing — a dead
+        // microphone comes back as "you" and gets filed as a note. Measure the
+        // signal instead of trusting the transcript.
+        const level = await analyzeWav(path);
+        if (level?.silent) {
+          errline(color.yellow(`That recording is silent (${level.seconds.toFixed(1)}s, no signal).`));
+          if (recorded) {
+            errline(color.dim(`Audio kept at ${path}`));
+            throw new PprError(
+              'EEXTERNAL',
+              'The microphone captured nothing',
+              process.platform === 'darwin'
+                ? 'Give your terminal microphone access: System Settings › Privacy & Security › Microphone'
+                : 'Check the input device your recorder is using',
+            );
+          }
+          throw new PprError('EINVALID', `${path} has no audible signal`);
+        }
+
         if (!g.quiet && !g.json) errline(color.dim('Transcribing …'));
         let transcript: string;
         try {
@@ -203,6 +222,7 @@ export function voiceCommand(): Command {
           }
           throw err;
         }
+        transcript = transcript.replace(/\[BLANK_AUDIO\]|\(silence\)/gi, '').trim();
         if (!transcript.trim()) {
           if (recorded) errline(color.yellow(`Nothing was transcribed. Audio kept at ${path}`));
           throw new PprError('EEXTERNAL', 'Transcription came back empty');

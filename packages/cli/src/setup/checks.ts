@@ -139,10 +139,6 @@ const vaultCheck: Check = {
     return ctx.vaultExists ? ok(ctx.root) : missing(`none at ${ctx.root}`, 'ppr init');
   },
   async repair(ctx) {
-    if (ctx.vaultExists) {
-      out(`  ${color.dim('already at')} ${ctx.root}`);
-      return false;
-    }
     const where = (await promptLine(`  Where should notes live? [${ctx.root}] `)) || ctx.root;
     const target = resolve(expandHome(where));
     const { created } = await initVault(target);
@@ -223,11 +219,8 @@ const apiKeyCheck: Check = {
   },
   async repair(ctx) {
     const name = keyEnvFor(ctx.config)!;
-    if (ctx.secret(name)) {
-      out(`  ${color.dim(`${name} already set`)}`);
-      return false;
-    }
-    const key = await promptLine(`  ${name}: `);
+    const already = ctx.secret(name);
+    const key = await promptLine(`  ${name}${already ? ' (replacing the stored one)' : ''}: `);
     if (!key) return false;
     const path = await saveSecret(name, key);
     out(`  ${color.green('✓')} saved to ${path} ${color.dim('(0600, never in the vault)')}`);
@@ -363,7 +356,16 @@ const whisperBinaryCheck: Check = {
   },
   async repair(ctx) {
     const binary = ctx.config.transcribe.binary || 'whisper-cli';
-    if (await which(binary)) return false;
+    const found = await which(binary);
+    if (found) {
+      out(`  ${color.dim(`already installed at ${found}`)}`);
+      const where = await promptLine('  Use a different binary? [leave blank to keep] ');
+      if (!where) return false;
+      await writeSetting(ctx.root, 'transcribe.binary', where);
+      out(color.dim(`  → ppr config set transcribe.binary ${where}`));
+      await ctx.reload();
+      return true;
+    }
     return offerInstall('whisper.cpp', 'brew install whisper-cpp');
   },
 };
@@ -385,10 +387,7 @@ const whisperModelCheck: Check = {
   },
   async repair(ctx) {
     const configured = ctx.config.transcribe.model;
-    if (configured && existsSync(expandHome(configured))) {
-      out(`  ${color.dim(`already have ${configured}`)}`);
-      return false;
-    }
+    const currentId = WHISPER_MODELS.findIndex((m) => configured?.endsWith(m.file));
 
     const picked = await select({
       title: 'Speech model to download',
@@ -397,12 +396,17 @@ const whisperModelCheck: Check = {
         label: model.id,
         hint: `${model.sizeMb} MB — ${model.note ?? ''}`,
       })),
-      initial: Math.max(0, WHISPER_MODELS.findIndex((m) => m.id === DEFAULT_WHISPER_MODEL)),
+      initial:
+        currentId >= 0
+          ? currentId
+          : Math.max(0, WHISPER_MODELS.findIndex((m) => m.id === DEFAULT_WHISPER_MODEL)),
     });
 
     const model = findWhisperModel(picked.value)!;
     const destination = join(modelsDir(), model.file);
-    if (!(await confirm(`Download ${model.label} (${model.sizeMb} MB) to ${modelsDir()}?`, true))) {
+    const onDisk = existsSync(destination);
+
+    if (!onDisk && !(await confirm(`Download ${model.label} (${model.sizeMb} MB) to ${modelsDir()}?`, true))) {
       out(color.dim(`  → ppr config set transcribe.model <path to a ggml model>`));
       return false;
     }
@@ -438,8 +442,38 @@ const recorderCheck: Check = {
     return ok(`${tool}${note}`);
   },
   async repair() {
-    if ((await which('rec')) ?? (await which('ffmpeg'))) return false;
-    return offerInstall('sox', 'brew install sox');
+    const found = (await which('rec')) ?? (await which('ffmpeg'));
+    if (!found) return offerInstall('sox', 'brew install sox');
+
+    out(`  ${color.dim(`using ${found}`)}`);
+    // Permission problems are invisible until you record: the tool succeeds and
+    // captures silence. Three seconds of measurement beats a mystery later.
+    if (!(await confirm('  Test the microphone (records 3 seconds)?', true))) return false;
+
+    const { analyzeWav, record } = await import('@ppr/core/node');
+    const recording = await record();
+    out(color.red('  ● say something …'));
+    await new Promise((done) => setTimeout(done, 3000));
+    const file = await recording.stop();
+
+    const level = await analyzeWav(file);
+    if (!level) {
+      errline(color.yellow(`  Could not read the test recording (${file})`));
+      return false;
+    }
+    if (level.silent) {
+      errline(color.yellow('  Silence — the microphone captured nothing.'));
+      if (process.platform === 'darwin') {
+        errline(
+          color.dim('  Give your terminal microphone access:') +
+            '\n' +
+            color.dim('  System Settings › Privacy & Security › Microphone'),
+        );
+      }
+      return false;
+    }
+    out(`  ${color.green('✓')} heard you ${color.dim(`(peak ${Math.round(level.peak * 100)}%)`)}`);
+    return false;
   },
 };
 
@@ -488,13 +522,22 @@ export function applicable(ctx: CheckContext): Check[] {
   return CHECKS.filter((check) => !check.applies || check.applies(ctx));
 }
 
-export async function inspectAll(ctx: CheckContext): Promise<CheckReport[]> {
+/**
+ * Inspects the checks that apply, or exactly the ones asked for.
+ *
+ * Naming a step explicitly overrides applicability: `ppr setup ai.key` should
+ * tell you about the key even when the current backend does not use one, which
+ * is the same rule the interactive walkthrough follows.
+ */
+export async function inspect(ctx: CheckContext, only?: Check[]): Promise<CheckReport[]> {
   const reports: CheckReport[] = [];
-  for (const check of applicable(ctx)) {
+  for (const check of only ?? applicable(ctx)) {
     const finding = await check.inspect(ctx);
     reports.push({ id: check.id, label: check.label, repairable: Boolean(check.repair), ...finding });
   }
   return reports;
 }
+
+export const inspectAll = (ctx: CheckContext): Promise<CheckReport[]> => inspect(ctx);
 
 export const isAbsolutePath = isAbsolute;

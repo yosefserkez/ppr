@@ -157,11 +157,18 @@ fragment.
 ## Setup and diagnosis
 
 ```bash
-ppr setup            # guided: configure, install, download
-ppr doctor           # what is wrong, and the command that fixes it
-ppr doctor --fix     # offer to fix each one
-ppr doctor --json    # the same list as data
+ppr setup                  # guided: configure, install, download
+ppr setup voice            # just the voice steps
+ppr setup voice.model      # just that one — swap models without the whole tour
+ppr setup --list           # every step id
+ppr doctor                 # what is wrong, and the command that fixes it
+ppr doctor --fix           # offer to fix each one
+ppr doctor voice --json    # the same list as data, scoped
 ```
+
+Steps are dotted ids, so a prefix selects a family: `voice` covers
+`voice.binary`, `voice.model`, and `voice.recorder`. Naming a step runs it even
+when it would not otherwise apply.
 
 Both read one registry of checks, so a wizard cannot drift from the diagnosis.
 Every check that can fail carries the exact non-interactive command that fixes
@@ -226,6 +233,13 @@ and `command` backends are also available.
 `ppr voice` checks the whole chain before the microphone opens, and if
 transcription fails afterwards it tells you where your audio is rather than
 discarding it.
+
+**If transcription keeps returning a single stray word like "you", the
+microphone is muted, not the model.** Whisper hallucinates on silence rather
+than failing, so ppr measures the signal and says so instead of filing the
+result as a note. `ppr setup voice.recorder` records three seconds and tells you
+whether anything was heard — on macOS the usual cause is your terminal lacking
+microphone access in System Settings › Privacy & Security.
 
 `--no-ai` skips model *generation*, not transcription — `ppr --no-ai voice` still
 records and transcribes, it just stores your words as they came out.

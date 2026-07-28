@@ -46,9 +46,14 @@ which is also how the walkthrough grows as choices unlock steps.
 **Repairs print the plain command.** Every `→ ppr config set …` line teaches the
 scriptable path. The guided flow is a convenience, never the only way in.
 
-**Repairs are idempotent and offerable.** Setup asks about steps that are
-already fine ("Change it?"), because it is also how someone revisits a choice.
-Return `false` when nothing changed.
+**A repair runs only after consent — so honour it.** Do not guard a repair with
+"already configured, nothing to do". Answering *yes* to "Change it?" and being
+told "already have it" is the bug that guard causes. Decide whether to *offer*
+the step in `inspect`; once `repair` is called, do the thing. Return `false`
+only when the user backed out inside the repair itself.
+
+**Preselect the current value.** A picker reopened to change a setting should
+start on what is already chosen, not on the global default.
 
 **Ask before installing or downloading.** Show the exact command or the size in
 megabytes first. `offerInstall()` refuses when the tool itself is missing and
