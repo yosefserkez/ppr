@@ -452,3 +452,74 @@ test('a silent recording is diagnosed instead of transcribed into noise', async 
     assert.doesNotMatch(stderr, /^you$/m);
   });
 });
+
+test('a mistyped command never becomes an entry', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['serach', 'redis']);
+    assert.equal(code, 2);
+    assert.match(stderr, /Unknown command: serach/);
+    assert.match(stderr, /Did you mean `ppr search`/);
+    assert.match(stderr, /ppr "serach redis"/, 'the error shows how to log it anyway');
+
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0, 'nothing was written');
+  });
+});
+
+test('a single word that is nearly a command is treated as a typo', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['lsit']);
+    assert.equal(code, 2);
+    assert.match(stderr, /Did you mean `ppr list`/);
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
+  });
+});
+
+test('a quoted note is still one argument away', async () => {
+  await withVault(async (dir) => {
+    const { code } = await ppr(dir, ['shipped the redis migration #infra']);
+    assert.equal(code, 0);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.title, 'shipped the redis migration');
+    assert.deepEqual(entry.tags, ['infra']);
+  });
+});
+
+test('+ captures without quoting', async () => {
+  await withVault(async (dir) => {
+    const { code } = await ppr(dir, ['+', 'rolled', 'it', 'back', 'twice']);
+    assert.equal(code, 0);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.body, 'rolled it back twice');
+  });
+});
+
+test('an ordinary one-word note is not blocked', async () => {
+  await withVault(async (dir) => {
+    assert.equal((await ppr(dir, ['lunch'])).code, 0);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.body, 'lunch');
+  });
+});
+
+test('a bare ppr reports instead of capturing', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['already here']);
+
+    const { code, stdout } = await ppr(dir, []);
+    assert.equal(code, 0);
+    assert.match(stdout, /already here/, 'it shows what you wrote today');
+    assert.match(stdout, /ppr "text"/, 'and how to write more');
+
+    // The point of the change: running ppr by accident costs nothing.
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 1);
+  });
+});
+
+test('piping still captures, because a pipe is deliberate', async () => {
+  await withVault(async (dir) => {
+    const { code } = await ppr(dir, [], { input: 'straight from a pipe\n' });
+    assert.equal(code, 0);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.body, 'straight from a pipe');
+  });
+});

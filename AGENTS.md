@@ -108,6 +108,12 @@ Temp file plus rename. An interrupted `ppr` cannot leave half an entry on disk.
 warnings, confirmations, rebuild chatter — goes to stderr. `ppr ls --json | jq`
 must never see a stray word.
 
+**I11. Never turn a mistake into data.** A command that is not recognised is an
+error, never an entry. Capture happens when the user said so — a quoted
+argument, `+`, `write`, or a pipe — and never as a fallback for parsing failure.
+*Enforced by:* the default action in `cli/src/index.ts`; test "a mistyped
+command never becomes an entry".
+
 ---
 
 ## 4. Architecture
@@ -393,6 +399,15 @@ permission problem and were reported as one; permission was granted the whole
 time. Two failures with one symptom need a check that distinguishes them —
 `micPermission()` asks the system rather than guessing, so the hint names the
 cause that actually applies.
+
+**L17. Ambiguity between data and commands must be resolved by the user, not
+guessed.** Any unrecognised word used to fall through to capture, so
+`ppr serach redis` filed a note saying "serach redis". No heuristic can separate
+a mistyped command from a short note — the information is not in the text. The
+fix was to find a signal the user already sends: quoting. One argument is a
+note, several are an attempted command, `+` is the explicit unquoted path, and
+a bare invocation reports rather than writes. When a guess would sometimes
+destroy intent, make the intent explicit instead of improving the guess.
 
 ---
 

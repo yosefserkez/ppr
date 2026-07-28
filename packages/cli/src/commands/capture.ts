@@ -73,6 +73,9 @@ const captureFlags = (cmd: Command): Command =>
 export function writeCommand(): Command {
   const cmd = new Command('write')
     .alias('w')
+    // `+` is the unquoted fast path: shell-safe, and unmistakably an intent to
+    // capture rather than a mistyped command.
+    .alias('+')
     .description('write an entry (opens a prompt, or takes text/stdin)')
     .argument('[text...]', 'entry text')
     .option('-k, --kind <kind>', 'entry kind', 'log');

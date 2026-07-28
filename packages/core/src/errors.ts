@@ -25,7 +25,7 @@ export class PprError extends Error {
 }
 
 export const noVault = (dir: string) =>
-  new PprError('ENOVAULT', `No ppr vault at ${dir}`, `Run \`ppr init\` to create one.`);
+  new PprError('ENOVAULT', `No ppr vault at ${dir}`, 'Run `ppr setup` to get started, or `ppr init` for just the vault.');
 
 export const notFound = (what: string) => new PprError('ENOTFOUND', `No entry matching "${what}"`);
 

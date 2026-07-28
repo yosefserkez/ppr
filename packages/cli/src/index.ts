@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { PprError, VERSION } from '@ppr/core';
+import { PprError, truncate, VERSION } from '@ppr/core';
 import { globals, hoistGlobals, withVault } from './context.js';
 import { closePrompts, hasStdin, resolveText } from './input.js';
 import { color, entryJson, errline, json, out, setColor, shortId } from './render.js';
+import { overview } from './overview.js';
+import { suggest } from './suggest.js';
 import {
   appendCommand,
   clipCommand,
@@ -94,23 +96,52 @@ program.addCommand(aiCommand());
 program.addCommand(doctorCommand());
 program.addCommand(reindexCommand());
 
+/** Every command name and alias, for did-you-mean. */
+const commandNames = (): string[] =>
+  program.commands.flatMap((cmd) => [cmd.name(), ...cmd.aliases()]);
+
+/**
+ * Refuses to guess.
+ *
+ * `ppr serach redis` used to become a note saying "serach redis", because any
+ * unrecognised word fell through to capture. No heuristic can separate a
+ * mistyped command from a short note — the information is not in the text — so
+ * ppr uses a signal that already exists: quoting. One argument is a note,
+ * several are an attempted command. Both ways to log it are in the error.
+ */
+function notACommand(text: string[]): PprError {
+  const guess = suggest(text[0]!, commandNames());
+  const quoted = text.join(' ').replaceAll('"', '\\"');
+  return new PprError(
+    'EINVALID',
+    `Unknown command: ${text[0]}`,
+    [
+      guess ? `Did you mean \`ppr ${guess}\`?` : '',
+      `To log it as a note:  ppr "${truncate(quoted, 48)}"`,
+      `Or write it directly: ppr + ${truncate(text.join(' '), 48)}`,
+    ]
+      .filter(Boolean)
+      .join('\n  '),
+  );
+}
+
 /**
  * `ppr "shipped the migration"` — the fastest path from thought to file.
- * With no arguments and a terminal, it opens the same prompt as `ppr write`.
+ * A bare `ppr` reports instead of capturing, so running it by accident is free.
  */
 program
-  .argument('[text...]', 'text to log (shorthand for `ppr write`)')
+  .argument('[text...]', 'a quoted note to log, e.g. ppr "shipped it"')
   .action(async (text: string[], _flags: unknown, self: Command) => {
-    if (!text.length && process.stdin.isTTY) {
-      await writeCommand().parseAsync(['write'], { from: 'user' });
-      return;
+    const piped = !text.length && hasStdin();
+
+    if (!text.length && !piped) {
+      return withVault(self, async (vault) => overview(vault));
     }
-    // Nothing typed, nothing piped, no terminal to prompt in: show the help
-    // rather than blocking or opening an editor into the void.
-    if (!text.length && !hasStdin()) {
-      program.outputHelp();
-      return;
-    }
+    // Several bare words are an attempted command, not a note.
+    if (text.length > 1) throw notACommand(text);
+    // A single word that is nearly a command is a typo, not a one-word note.
+    if (text.length === 1 && suggest(text[0]!, commandNames())) throw notACommand(text);
+
     await withVault(self, async (vault) => {
       const body = await resolveText(text);
       if (!body) {
@@ -129,8 +160,10 @@ program.addHelpText(
   'after',
   `
 Examples:
+  ppr                                             what you wrote today
   ppr setup                                       guided setup, downloads included
-  ppr "deploy failed again, rolled back to 4.2"   quick log
+  ppr "deploy failed again, rolled back to 4.2"   quick log (quoted = a note)
+  ppr + deploy failed again                       the same, without quoting
   cat notes.txt | ppr dump                        clean up a wall of text
   ppr clip https://example.com/post               save what a page says
   ppr voice                                       record, transcribe, distill

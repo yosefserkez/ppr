@@ -73,7 +73,9 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | Command | What it does |
 | --- | --- |
 | `ppr "text"` | Quick log. The fastest path from thought to file. |
-| `ppr` | Opens a prompt, then asks a follow-up question or two. |
+| `ppr + text` | The same, without quoting. |
+| `ppr write` | A longer entry, with a follow-up question or two. |
+| `ppr` | What you wrote today. Writes nothing. |
 | `ppr dump [text]` | Brain dump in, clean entry out. Reads stdin. |
 | `ppr clip <url>` | Fetches a page, extracts the content, saves what it says. |
 | `ppr voice [file]` | Records, transcribes, distills. |
@@ -83,6 +85,28 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 cuts filler and repetition, keeps every fact, and never invents anything. A bare
 URL is treated as a clip, because remembering which command you wanted is not a
 good use of anyone's attention.
+
+### Quoting is how you say "this is a note"
+
+`ppr "shipped the migration"` logs. `ppr shipped the migration` does not — it
+reports an unknown command and tells you both ways to log it.
+
+That line exists because no rule can separate `ppr serach redis` (a typo) from
+`ppr lunch with sam` (a note) by looking at the words. Rather than guess and
+occasionally file your typos as notes, ppr uses a signal the shell already
+has: one argument is a note, several are an attempted command.
+
+```
+$ ppr serach redis
+error Unknown command: serach
+  Did you mean `ppr search`?
+  To log it as a note:  ppr "serach redis"
+  Or write it directly: ppr + serach redis
+```
+
+`ppr + …` is the unquoted path when you would rather not reach for quotes, and
+a bare `ppr` shows today's entries instead of capturing — so running it by
+accident costs nothing.
 
 ## Browse
 
