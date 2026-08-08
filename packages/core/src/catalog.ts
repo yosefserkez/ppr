@@ -1,4 +1,4 @@
-import type { Entry } from './types.js';
+import { MEMORY_KIND, type Entry } from './types.js';
 import type { Storage } from './ports.js';
 import { ENTRIES_DIR, parseEntry } from './entry.js';
 import { ambiguous, notFound } from './errors.js';
@@ -67,6 +67,17 @@ export class Catalog {
     );
   }
 
+  /**
+   * The entries that *happened*, newest first.
+   *
+   * `latest` and `^2` are positions in a journal, and a standing fact has no
+   * position in one — so a memory extracted a minute ago must not become the
+   * thing `ppr show` and `ppr memory learn` mean by "the last entry".
+   */
+  timeline(): Entry[] {
+    return this.entries().filter((e) => e.kind !== MEMORY_KIND);
+  }
+
   get(id: string): Entry | undefined {
     return this.byId.get(id);
   }
@@ -78,6 +89,10 @@ export class Catalog {
   /**
    * Turns whatever the user typed into one entry:
    * `latest`/`last`, `^2` (2nd newest), a full or partial id, or a title match.
+   *
+   * Positional refs walk the timeline; everything else searches the whole
+   * vault, so a memory stays addressable by id or title for `show`, `edit`,
+   * and `rm` while never being what "the latest entry" means.
    */
   resolve(ref: string): Entry {
     const query = ref.trim();
@@ -85,13 +100,13 @@ export class Catalog {
     const all = this.entries();
 
     if (query === 'latest' || query === 'last') {
-      const first = all[0];
+      const first = this.timeline()[0];
       if (!first) throw notFound(ref);
       return first;
     }
     const nth = /^\^(\d+)$/.exec(query);
     if (nth) {
-      const hit = all[Number(nth[1]) - 1];
+      const hit = this.timeline()[Number(nth[1]) - 1];
       if (!hit) throw notFound(ref);
       return hit;
     }

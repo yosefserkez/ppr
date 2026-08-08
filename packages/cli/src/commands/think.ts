@@ -131,8 +131,18 @@ export function memoryCommand(): Command {
           );
         }
         const piped = hasStdin() ? (await readStdin()).trim() : '';
-        const source = piped || (refs.length ? refs : ['latest']).map((r) => vault.get(r).body).join('\n\n');
-        const created = await vault.remember(source);
+        // Learning from a memory would only ever re-derive the fact it already
+        // is. `latest` no longer resolves to one, but an explicit ref still can.
+        const sources = piped ? [] : (refs.length ? refs : ['latest']).map((r) => vault.get(r));
+        const usable = sources.filter((e) => e.kind !== 'memory');
+        if (sources.length && !usable.length) {
+          throw new PprError(
+            'EINVALID',
+            'That is already a memory',
+            'Point `learn` at an entry you wrote — or edit the fact directly with `ppr edit`.',
+          );
+        }
+        const created = await vault.remember(piped || usable.map((e) => e.body).join('\n\n'));
         const g = globals(self);
         if (g.json) return json(created.map(entryJson));
         if (!created.length) return void out(color.dim('Nothing durable in there.'));

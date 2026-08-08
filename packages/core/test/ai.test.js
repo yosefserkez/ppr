@@ -170,6 +170,34 @@ test('memories are extracted once and never duplicated', async () => {
   assert.equal(vault.list({ kind: 'memory' }).length, 2);
 });
 
+test('memory never becomes the thing `latest` means', async () => {
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ memories: ['Emily likes chocolate'] })),
+  });
+  const log = await vault.add({ body: 'Emily likes chocolate', kind: 'log' });
+  await vault.remember('Emily likes chocolate');
+
+  // The bug this exists to stop: `learn` defaulted to `latest`, `latest` became
+  // the memory it had just written, and every later run re-read its own output.
+  assert.equal(vault.get('latest').id, log.id);
+  assert.equal(vault.get('^1').id, log.id);
+});
+
+test('facts stay out of lists, recaps, and search until asked for by kind', async () => {
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ memories: ['Emily likes chocolate'] })),
+  });
+  await vault.add({ body: 'Bought a present today', kind: 'log' });
+  await vault.remember('Emily likes chocolate');
+
+  assert.equal(vault.list().length, 1, 'a standing fact is not a journal entry');
+  assert.equal(vault.search('chocolate').length, 0);
+  assert.equal(vault.list({ kind: 'memory' }).length, 1);
+  assert.equal(vault.search('chocolate', { kind: 'memory' }).length, 1);
+  // Still addressable, so `ppr show`/`edit`/`rm` work on a fact by title.
+  assert.equal(vault.get('Emily likes chocolate').kind, 'memory');
+});
+
 test('follow-up questions degrade to a generic prompt', async () => {
   const vault = await makeVault();
   const questions = await vault.followUps('shipped it');

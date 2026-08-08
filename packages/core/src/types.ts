@@ -7,6 +7,18 @@
 export const KINDS = ['log', 'note', 'dump', 'clip', 'voice', 'memory'] as const;
 export type Kind = (typeof KINDS)[number] | (string & {});
 
+/**
+ * The one kind that is not a thing that happened.
+ *
+ * Every other kind is an event: it belongs to the day it was written, and it
+ * never changes afterwards. A memory is *state* — "Emily's birthday is 20
+ * October" was not true only on the afternoon it was extracted — so it is
+ * mutable, undated, and deliberately outside the timeline. Keeping the two in
+ * one stream is what made `latest` resolve to a memory and `ppr memory learn`
+ * re-read its own output until every run said "nothing durable in there".
+ */
+export const MEMORY_KIND = 'memory';
+
 /** A single markdown file in the vault, parsed. */
 export interface Entry {
   /** Sortable, time-prefixed unique id. Also the stable handle used by the CLI. */

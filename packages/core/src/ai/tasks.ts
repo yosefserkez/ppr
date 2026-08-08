@@ -230,13 +230,22 @@ export async function followUps(text: string, opts: TaskOptions = {}): Promise<s
 
 const MEMORY_SYSTEM = `${VOICE}
 
-Pull out only the durable facts — things that will still be true and useful in
-six months. Preferences, decisions, commitments, people, stable context.
+Pull out the durable facts — things that will still be true and useful in six
+months. People and how they relate to the user, preferences, decisions,
+commitments, dates that repeat, stable context about projects and tools.
 
 Rules:
-- Skip anything transient: today's mood, one-off status, in-progress work.
-- One fact per line, third person, no dates unless the fact is a date.
-- If there is nothing durable, return an empty list. That is a valid answer.
+- Split compound sentences. "My girlfriend Emily's birthday is 20 October and
+  she likes chocolate" is three facts: who Emily is, when her birthday is, and
+  what she likes. One idea per fact, always.
+- Every fact must stand on its own, read cold, a year from now. Name the
+  subject in each one — never "she", "it", "that project".
+- Refer to the writer as "the user". "My sister" becomes "the user's sister".
+- Keep names, numbers, and dates exactly as given. Never round or infer a year.
+- Skip anything transient: today's mood, current status, work in progress,
+  anything that is only true this week.
+- If there is genuinely nothing durable, return an empty list. That is a valid
+  answer, and a better one than a vague fact.
 
 Return JSON: {"memories": string[]}`;
 

@@ -123,6 +123,17 @@ lands in it by accident. *Enforced by:* the default action in
 `cli/src/index.ts`; tests "a mistyped command never becomes an entry" and "a
 bare word is never a note, however ordinary it looks".
 
+**I12. Memory is state; everything else is a log.**
+`kind: memory` records something that *is true*, not something that *happened*.
+It is therefore outside the timeline: `latest`, `^2`, `ppr ls`, `ppr recap`, and
+search all skip it unless `-k memory` asks for it, and `ppr memory learn` never
+reads a memory as a source. Ignoring this is how the memory layer ate its own
+tail — learn defaulted to `latest`, `latest` became the fact it had just
+written, and every run after the first reported "nothing durable in there".
+*Enforced by:* `MEMORY_KIND` in `types.ts`, the guard in `filterEntries()`, and
+`Catalog.timeline()`; tests "memory never becomes the thing `latest` means" and
+"facts stay out of lists, recaps, and search until asked for by kind".
+
 ---
 
 ## 4. Architecture

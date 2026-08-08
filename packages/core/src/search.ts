@@ -1,15 +1,24 @@
-import type { Entry, ListQuery, SearchHit } from './types.js';
+import { MEMORY_KIND, type Entry, type ListQuery, type SearchHit } from './types.js';
 import { plainText, truncate } from './util/text.js';
 
 const asArray = <T>(v: T | T[] | undefined): T[] =>
   v === undefined ? [] : Array.isArray(v) ? v : [v];
 
-/** Pure filter over already-loaded entries. Same semantics on every platform. */
+/**
+ * Pure filter over already-loaded entries. Same semantics on every platform.
+ *
+ * Memory is the one kind that has to be asked for by name. It is state rather
+ * than an event (see `MEMORY_KIND`), so a list of what happened, a recap of a
+ * week, or a search across the journal should not be padded with standing
+ * facts — `ppr memory` and `ppr ask` are how you reach those. `-k memory` is
+ * the escape hatch, and it works on every command that takes the filter flags.
+ */
 export function filterEntries(entries: Entry[], query: ListQuery = {}): Entry[] {
   const kinds = new Set(asArray(query.kind).map(String));
   const tags = asArray(query.tag).map((t) => t.replace(/^#/, '').toLowerCase());
 
   let out = entries.filter((e) => {
+    if (!kinds.size && e.kind === MEMORY_KIND) return false;
     if (kinds.size && !kinds.has(e.kind)) return false;
     if (tags.length && !tags.every((t) => e.tags.some((et) => et === t || et.startsWith(`${t}/`))))
       return false;
