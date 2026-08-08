@@ -277,7 +277,16 @@ export const CASES = [
         // Anything naming a car here is invented, which is the failure that
         // makes a memory layer unusable by another tool.
         mustNot: [['toyota'], ['honda'], ['tesla'], ['bmw'], ['ford']],
-        must: [['not', 'know'], ['nothing'], ['no ', 'information'], ['no ', 'mention'], ['not say']],
+        // Every honest way to say it: "I do not know", "I don't know",
+        // "nothing here mentions that", "there is no information about it".
+        must: [
+          ['not', 'know'],
+          ["don't", 'know'],
+          ['nothing'],
+          ['no ', 'information'],
+          ['no ', 'mention'],
+          ['not say'],
+        ],
         anyMust: true,
       },
     ],

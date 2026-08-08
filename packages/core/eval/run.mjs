@@ -43,9 +43,13 @@ const AS_JSON = has('json');
  * earlier version of this scoring look far better than the system was.
  */
 function containsAll(text, terms) {
-  const haystack = ` ${text.toLowerCase().replace(/['’]s\b/g, '')} `;
+  // Curly apostrophes are normalised first: a model writing "don’t know" was
+  // being scored as a failure to say it did not know, which measured the
+  // scorer rather than the model.
+  const normalise = (s) => s.toLowerCase().replace(/[’‘]/g, "'");
+  const haystack = ` ${normalise(text).replace(/'s\b/g, '')} `;
   return terms.every((term) => {
-    const needle = term.toLowerCase().trim();
+    const needle = normalise(term).trim();
     if (!needle) return true;
     // A term with a trailing space (e.g. "no ") is matched literally, so a
     // case can ask for a phrase without fighting word boundaries.
