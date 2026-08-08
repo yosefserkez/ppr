@@ -231,7 +231,9 @@ export function nextOccurrence(fact: Fact, now: Date): Occurrence | null {
     date: when,
     days: Math.round((when.getTime() - today.getTime()) / 86_400_000),
   };
-  if (fact.recurs === 'yearly' && when.getFullYear() > year) {
+  // `0000` is how an unknown year is recorded — a birthday with no birth year
+  // still recurs, it just cannot say which one this will be.
+  if (fact.recurs === 'yearly' && year >= 1000 && when.getFullYear() > year) {
     occurrence.ordinal = when.getFullYear() - year;
   }
   return occurrence;

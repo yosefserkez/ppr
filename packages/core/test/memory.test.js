@@ -76,3 +76,13 @@ test('terms too ordinary to identify a fact are not terms', () => {
   // The possessive is stripped, so "got Emily a present" still counts.
   assert.deepEqual(factTerms("Emily's birthday is 20 October"), ['emily', 'birthday', 'october']);
 });
+
+test('a birthday with no known year recurs but claims no ordinal', () => {
+  const unknown = fact("Priya's birthday is 12 September", { date: '0000-09-12', recurs: 'yearly' });
+  const next = nextOccurrence(unknown, new Date(2026, 7, 8));
+
+  assert.equal(next.date.getMonth(), 8);
+  assert.equal(next.date.getDate(), 12);
+  assert.equal(next.date.getFullYear(), 2026);
+  assert.equal(next.ordinal, undefined, 'it cannot know which birthday this is');
+});

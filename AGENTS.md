@@ -336,6 +336,31 @@ config — the CLI harness redirects `XDG_CONFIG_HOME` and `PPR_DIR` into a temp
 and any new test must too. Tests assert behaviour a user would notice, and the test
 name says what that behaviour is.
 
+**Evals: `pnpm eval`.** The test suite scripts the model, which is the only way
+to pin behaviour — and it means everything handed *to* a model is untested by
+construction. Does it split a compound sentence, refuse to invent a year, notice
+that "Sam owns auth" and "authentication is Sam's job" are one fact? Only
+`packages/core/eval` answers that, by running the real pipeline against a real
+model and scoring with deterministic keyword matching (never a model judging a
+model).
+
+It is not part of `pnpm test`: it costs money, needs a network, and is not
+deterministic. Run it when you change a prompt, the fact schema, or
+reconciliation — and use `--repeat 3`, because a single pass cannot tell a real
+regression from model noise.
+
+```bash
+pnpm eval                                # the configured model
+pnpm eval --model openai/gpt-4o-mini     # a specific one
+pnpm eval --dimension dates --repeat 3   # while iterating on one prompt
+pnpm eval --json > runs/$(date +%F).json # a number to compare next month
+```
+
+Dimensions: decomposition, precision, provenance, dates, reconciliation,
+retrieval. A case asserts on *meaning* — a set of words that must appear in some
+fact — and every case also says what would be wrong, because a suite that only
+measures recall rewards a model that keeps everything.
+
 **Testing a TUI.** The reducer covers the logic. To verify real rendering, drive the
 built binary through a pseudo-terminal — Python's `pty` module works where `script`
 does not, because it needs no controlling terminal. Allocate a pty, set the window

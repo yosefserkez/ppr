@@ -285,9 +285,13 @@ Rules:
 Return JSON: {"memories": [{"fact": string, "from": string[], "date": string, "recurs": string}]}
 - fact: one sentence, the fact itself and nothing else.
 - from: the ids of the sources it came from, copied exactly from their headings.
-- date: YYYY-MM-DD, only when the fact *is* a calendar date — a birthday, an
-  anniversary, a deadline. Use the year given; never guess one. Omit otherwise.
-- recurs: "yearly" when the date comes round every year. Omit otherwise.`;
+- date: the calendar date the fact is about, as YYYY-MM-DD. Always include it
+  for a birthday, an anniversary, or a deadline. Leave it out only when the
+  fact is not about a date at all.
+  Take the year from the source even when it is in a different sentence. If the
+  source never gives a year, write 0000 as the year. Never invent one.
+- recurs: "yearly" for anything that comes round every year, a birthday or an
+  anniversary. Leave it out otherwise.`;
 
 /** One source of text to mine for facts. `id` is an entry id when there is one. */
 export interface FactSource {
@@ -351,9 +355,7 @@ export async function extractFacts(
   const facts: FactCandidate[] = [];
   for (const item of parsed.memories.slice(0, opts.max ?? 20)) {
     const text = typeof item === 'string' ? item.trim() : String((item as { fact?: unknown })?.fact ?? '').trim();
-    // A half-parsed response yields shards of the schema rather than sentences.
-    // They read as facts and would be stored as facts, so drop them.
-    if (text.length < 8 || /^["'{[]|["{[]$/.test(text)) continue;
+    if (!looksLikeAFact(text)) continue;
     const claimed = asStringList((item as { from?: unknown })?.from, 5).map((s) => s.trim());
     // An unrecognised id is not provenance. Fall back to the whole batch,
     // which is true — the fact did come from somewhere in it.
@@ -367,6 +369,23 @@ export async function extractFacts(
     });
   }
   return { facts, ok: true };
+}
+
+/**
+ * Whether a string is a sentence or a piece of the schema that was meant to
+ * carry it.
+ *
+ * A half-parsed reply yields shards like `"from": ["` — they arrive in the
+ * right place, read as facts, and would be stored as facts. What this must not
+ * do is reject real facts for looking structured: with `capture.autoLink` on,
+ * every fact about a person *starts* with `[[Their Name]]`, and an earlier
+ * version of this check threw all of them away.
+ */
+function looksLikeAFact(text: string): boolean {
+  if (text.length < 8) return false;
+  if (text.trim().split(/\s+/).length < 2) return false;
+  // Quote and brace debris. `[` is deliberately absent: `[[Emily]]` is a name.
+  return !/^["'{]|["{[]$|\\"|"\s*:/.test(text);
 }
 
 /**

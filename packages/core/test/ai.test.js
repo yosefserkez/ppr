@@ -237,12 +237,29 @@ test('entries the model garbles stay queued instead of being marked read', async
 
 test('shards of a half-parsed response are not stored as facts', async () => {
   const vault = await makeVault({
-    provider: learnProvider({ facts: ['"from": ["', 'x', 'Emily likes chocolate'] }),
+    provider: learnProvider({
+      facts: ['"from": ["', 'x', 'fact\\": "', '{', 'Emily likes chocolate'],
+    }),
   });
   await vault.add({ body: 'note', kind: 'log' });
   const result = await vault.learn();
 
   assert.deepEqual(result.learned.map((e) => e.body), ['Emily likes chocolate']);
+});
+
+test('a fact that opens with a wikilink is a fact, not debris', async () => {
+  // Found by the eval suite: with `capture.autoLink` on, every fact about a
+  // person starts with `[[Their Name]]`, and the debris filter ate all of them.
+  const vault = await makeVault({
+    provider: learnProvider({ facts: ['[[Sam]] owns the auth service.'] }),
+    config: { capture: { ...DEFAULT_CONFIG.capture, autoLink: true } },
+  });
+  await vault.add({ body: 'Sam owns auth', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.equal(result.learned.length, 1);
+  assert.equal(result.learned[0].body, '[[Sam]] owns the auth service.');
+  assert.deepEqual(result.learned[0].links, ['sam']);
 });
 
 test('facts live outside the journal tree', async () => {
