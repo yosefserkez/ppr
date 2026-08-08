@@ -70,21 +70,23 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 
 ## Capture
 
-| Command | What it does |
-| --- | --- |
-| `ppr "text"` | Quick log. The fastest path from thought to file. |
-| `ppr + text` | The same, without quoting. |
-| `ppr write` | A longer entry, composed in `$EDITOR`. Asks a follow-up question. |
-| `ppr` | What you wrote today. Writes nothing. |
-| `ppr dump [text]` | Brain dump in, clean entry out. Reads stdin. |
-| `ppr clip <url>` | Fetches a page, extracts the content, saves what it says. |
-| `ppr voice [file]` | Records, transcribes, distills. |
-| `ppr append <ref>` | Keeps a thread going. |
+
+| Command            | What it does                                                      |
+| ------------------ | ----------------------------------------------------------------- |
+| `ppr "text"`       | Quick log. The fastest path from thought to file.                 |
+| `ppr + text`       | The same, without quoting.                                        |
+| `ppr write`        | A longer entry, composed in `$EDITOR`. Asks a follow-up question. |
+| `ppr`              | What you wrote today. Writes nothing.                             |
+| `ppr dump [text]`  | Brain dump in, clean entry out. Reads stdin.                      |
+| `ppr clip <url>`   | Fetches a page, extracts the content, saves what it says.         |
+| `ppr voice [file]` | Records, transcribes, distills.                                   |
+| `ppr append <ref>` | Keeps a thread going.                                             |
+
 
 `ppr dump` is the one to reach for when thoughts arrive faster than sentences. It
-cuts filler and repetition, keeps every fact, and never invents anything. A bare
-URL is treated as a clip, because remembering which command you wanted is not a
-good use of anyone's attention.
+cuts filler and repetition, keeps every fact, and never invents anything.   
+  
+A bare URL is treated as a clip, because remembering which command you wanted is not a good use of anyone's attention.
 
 ### A note is a sentence; a command is a word
 
@@ -178,21 +180,23 @@ ppr  all entries                                                      2/48
 ↑↓ move   ⏎ edit   o read   d dive   / filter   b back   ? keys   q quit
 ```
 
-| Key | Does |
-| --- | --- |
-| `↑ ↓` `j k` | Move. `g`/`G` jump to the ends, `ctrl-d`/`ctrl-u` page. |
-| `⏎` `e` | Open the entry in `$EDITOR`. Saves, reloads, back to the list. |
-| `o` `→` | Read the whole entry, scrollable. |
-| `d` `tab` | **Dive** — jump to backlinks, related entries, a tag, or that day. |
-| `b` `←` | Back, up the trail you dove down. |
-| `/` | Filter this list as you type. |
-| `a` | Append a line to the focused entry. |
-| `n` | New entry, without leaving. |
-| `x` | Delete, with a confirmation. |
-| `y` | Copy the file path to the clipboard. |
-| `r` | Reload from disk. |
-| `?` | Every key. |
-| `q` `esc` | Out. Escape steps back one layer at a time first. |
+
+| Key         | Does                                                               |
+| ----------- | ------------------------------------------------------------------ |
+| `↑ ↓` `j k` | Move. `g`/`G` jump to the ends, `ctrl-d`/`ctrl-u` page.            |
+| `⏎` `e`     | Open the entry in `$EDITOR`. Saves, reloads, back to the list.     |
+| `o` `→`     | Read the whole entry, scrollable.                                  |
+| `d` `tab`   | **Dive** — jump to backlinks, related entries, a tag, or that day. |
+| `b` `←`     | Back, up the trail you dove down.                                  |
+| `/`         | Filter this list as you type.                                      |
+| `a`         | Append a line to the focused entry.                                |
+| `n`         | New entry, without leaving.                                        |
+| `x`         | Delete, with a confirmation.                                       |
+| `y`         | Copy the file path to the clipboard.                               |
+| `r`         | Reload from disk.                                                  |
+| `?`         | Every key.                                                         |
+| `q` `esc`   | Out. Escape steps back one layer at a time first.                  |
+
 
 Dive is the part worth knowing about. Sitting on an entry, `d` offers only the
 routes that actually lead somewhere — if nothing links to it and it shares no
@@ -205,28 +209,34 @@ stdin and stdout are a terminal. Turn it off for good with
 
 ## Find
 
-| Command | What it does |
-| --- | --- |
-| `ppr ls` | Recent entries — the browser on a terminal, a list when piped. |
-| `ppr today` / `ppr week` | The two windows you actually ask for. |
-| `ppr search <query>` | Lexical search over titles, bodies, tags. |
-| `ppr browse` | The keyboard browser, on demand. |
-| `ppr show [ref] --related` | One entry, plus its neighbourhood. |
-| `ppr links [ref]` | Backlinks, forward links, unresolved links. |
-| `ppr tags` | What the vault is actually about. |
-| `ppr path [ref]` | The file path — for `vim`, `bat`, `rg`, anything. |
-| `ppr export -f jsonl` | Leaving is a feature. |
+
+| Command                    | What it does                                                   |
+| -------------------------- | -------------------------------------------------------------- |
+| `ppr ls`                   | Recent entries — the browser on a terminal, a list when piped. |
+| `ppr today` / `ppr week`   | The two windows you actually ask for.                          |
+| `ppr search <query>`       | Lexical search over titles, bodies, tags.                      |
+| `ppr browse`               | The keyboard browser, on demand.                               |
+| `ppr show [ref] --related` | One entry, plus its neighbourhood.                             |
+| `ppr links [ref]`          | Backlinks, forward links, unresolved links.                    |
+| `ppr tags`                 | What the vault is actually about.                              |
+| `ppr path [ref]`           | The file path — for `vim`, `bat`, `rg`, anything.              |
+| `ppr export -f jsonl`      | Leaving is a feature.                                          |
+
 
 Refs are forgiving: `latest`, `^2` (second newest), any part of an id, or a title
 fragment.
 
 ## Think
 
-| Command | What it does |
-| --- | --- |
-| `ppr recap --since 7d` | Standup, weekly review, or narrative. |
-| `ppr ask <question>` | An answer grounded in your entries, with citations. |
-| `ppr memory learn` | Pulls durable facts out and keeps them. |
+
+| Command                | What it does                                        |
+| ---------------------- | --------------------------------------------------- |
+| `ppr recap --since 7d` | Standup, weekly review, or narrative.               |
+| `ppr ask <question>`   | An answer grounded in your entries, with citations. |
+| `ppr memory learn`     | Pulls durable facts out and keeps them.             |
+
+
+
 
 ## Setup and diagnosis
 
@@ -271,14 +281,16 @@ collapses to a single line once you choose, so your scrollback keeps a record.
 With no terminal it prints the numbered list and reads one line per question, so
 `printf 'ollama\nqwen3\n\n' | ppr ai setup` configures a machine unattended.
 
-| Provider | Key needed | Runs where |
-| --- | --- | --- |
-| `none` (default) | — | Offline heuristics |
-| `apple` | — | On-device, macOS 26+ with Apple Intelligence |
-| `ollama` | — | Your machine |
-| `command` | — | Any program that reads a prompt on stdin |
-| `anthropic` | yes | Claude API |
-| `openai` | yes | OpenAI, or any OpenAI-compatible endpoint |
+
+| Provider         | Key needed | Runs where                                   |
+| ---------------- | ---------- | -------------------------------------------- |
+| `none` (default) | —          | Offline heuristics                           |
+| `apple`          | —          | On-device, macOS 26+ with Apple Intelligence |
+| `ollama`         | —          | Your machine                                 |
+| `command`        | —          | Any program that reads a prompt on stdin     |
+| `anthropic`      | yes        | Claude API                                   |
+| `openai`         | yes        | OpenAI, or any OpenAI-compatible endpoint    |
+
 
 `command` is the escape hatch: if you can run your model from a shell, ppr can use it.
 
@@ -287,8 +299,33 @@ ppr config set ai.provider command
 ppr config set ai.command "llm -m mistral-7b"
 ```
 
-API keys are read from the environment first, then from `~/.config/ppr/credentials.json`
-(mode 0600). They are never written into the vault, which is likely to end up in git.
+### Where the API key goes
+
+```bash
+ppr ai key            # asks for it, and works out which variable it belongs in
+ppr ai key sk-or-v1-… # same, without the prompt
+```
+
+That is the whole answer. The key is written to `~/.config/ppr/credentials.json`
+at mode 0600 — never into your config file, and never into the vault, which is
+likely to end up in git. Exporting the variable in your shell works too and
+takes precedence; `ppr ai status` tells you which of the two it is reading.
+
+What lives in config is the *name* of that variable, never the key:
+
+```jsonc
+// ~/.config/ppr/config.json
+{ "ai": { "provider": "openai",
+          "baseUrl": "https://openrouter.ai/api/v1",
+          "model": "anthropic/claude-sonnet-5",
+          "apiKeyEnv": "OPENROUTER_API_KEY" } }   // a name — ppr sets this for you
+```
+
+ppr names the variable after the endpoint, so an OpenAI-compatible host reads as
+itself: OpenRouter gets `OPENROUTER_API_KEY`, Groq gets `GROQ_API_KEY`. Paste a
+key where the name goes and every path refuses it and points you back at
+`ppr ai key` — `ppr config set`, `ppr doctor`, and the error you get mid-command.
+`ppr doctor --fix` will move an already-pasted key out of the file for you.
 
 Add `--no-ai` to any command to force the offline path for that run.
 
@@ -315,12 +352,12 @@ the signal first and refuses instead of filing the result as a note.
 Two things cause it, and ppr can tell them apart:
 
 - **The wrong input device**, which is the common one. macOS lists virtual
-  inputs — Zoom, Loopback, BlackHole — beside real microphones, and they often
-  sort first. Recording from one produces perfect, permanent silence. ppr
-  records from the *system default* and flags a virtual device if you pick one.
+inputs — Zoom, Loopback, BlackHole — beside real microphones, and they often
+sort first. Recording from one produces perfect, permanent silence. ppr
+records from the *system default* and flags a virtual device if you pick one.
 - **Permission**, where only the system can answer. `ppr setup voice.permission`
-  asks macOS directly: if the decision is still open it triggers the prompt, and
-  if it was denied it opens the right Settings pane, since nothing else can undo that.
+asks macOS directly: if the decision is still open it triggers the prompt, and
+if it was denied it opens the right Settings pane, since nothing else can undo that.
 
 ```bash
 ppr setup voice.recorder    # pick an input, then record 3s and measure it
@@ -377,11 +414,11 @@ index is only a cache.
 
 Two packages, one boundary:
 
-- **`@ppr/core`** — the engine. Entries, search, links, capture pipelines, AI tasks.
-  Imports no platform API. Everything it touches is a port: `Storage`, `Clock`,
-  `AIProvider`, `Transcriber`, `Fetcher`.
-- **`ppr`** — the CLI. Commander, colour, prompts. Parses arguments, calls core,
-  renders the result.
+- `@ppr/core` — the engine. Entries, search, links, capture pipelines, AI tasks.
+Imports no platform API. Everything it touches is a port: `Storage`, `Clock`,
+`AIProvider`, `Transcriber`, `Fetcher`.
+- `ppr` — the CLI. Commander, colour, prompts. Parses arguments, calls core,
+renders the result.
 
 The browser repeats that split one level down: `ui/state.ts` is a pure reducer
 (keys in, new state plus an effect out) with no terminal or vault access, and
@@ -392,7 +429,7 @@ ordinary unit tests with no pseudo-terminal in sight.
 A mobile, desktop, or web client implements the same handful of ports and gets the
 identical behaviour. That is not aspirational: the test suite already runs the whole
 engine against an in-memory store with no filesystem involved. See
-[`packages/core/README.md`](packages/core/README.md).
+`[packages/core/README.md](packages/core/README.md)`.
 
 ## Development
 
@@ -401,6 +438,8 @@ pnpm build       # both packages
 pnpm test        # 61 tests, no network required
 pnpm typecheck
 ```
+
+
 
 ## Prior art
 

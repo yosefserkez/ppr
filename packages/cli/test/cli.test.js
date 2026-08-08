@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -578,6 +578,70 @@ test('add and new reach the same place as write', async () => {
     await ppr(dir, ['new', 'from the new alias']);
     const bodies = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).map((e) => e.body);
     assert.deepEqual(bodies.sort(), ['from the add alias', 'from the new alias']);
+  });
+});
+
+test('`ppr ai key` works out where the key goes on its own', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['config', 'set', 'ai.provider', 'openai']);
+    await ppr(dir, ['config', 'set', 'ai.baseUrl', 'https://openrouter.ai/api/v1']);
+
+    // No variable name typed: ppr names it after the endpoint and records that.
+    const { code, stdout } = await ppr(dir, ['ai', 'key', 'sk-or-v1-testkeyvalue', '--json']);
+    assert.equal(code, 0);
+    const { name, file } = JSON.parse(stdout);
+    assert.equal(name, 'OPENROUTER_API_KEY');
+
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(stored.OPENROUTER_API_KEY, 'sk-or-v1-testkeyvalue');
+
+    const config = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.equal(config.ai.apiKeyEnv, 'OPENROUTER_API_KEY', 'the config points at the variable');
+    assert.ok(!JSON.stringify(config).includes('sk-or-v1'), 'the key never lands in config');
+  });
+});
+
+test('`ppr ai key` repairs a config that has the key pasted into it', async () => {
+  await withVault(async (dir) => {
+    const configFile = join(dir, '.xdg', 'ppr', 'config.json');
+    await mkdir(dirname(configFile), { recursive: true });
+    const key = 'sk-or-v1-2f45c9a5de610d3475826159ea58892955b79aa98026cc73acf5764';
+    await writeFile(
+      configFile,
+      // The mistake: apiKeyEnv holding the key rather than a variable name.
+      JSON.stringify({ ai: { provider: 'openai', model: 'x', baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: key } }),
+    );
+
+    const { code } = await ppr(dir, ['ai', 'key', key]);
+    assert.equal(code, 0);
+
+    const config = JSON.parse(await readFile(configFile, 'utf8'));
+    // The name must come from the endpoint, never from the pasted key itself.
+    assert.equal(config.ai.apiKeyEnv, 'OPENROUTER_API_KEY');
+    const stored = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'credentials.json'), 'utf8'));
+    assert.deepEqual(Object.keys(stored), ['OPENROUTER_API_KEY']);
+  });
+});
+
+test('a misconfigured key never costs you an entry', async () => {
+  await withVault(async (dir) => {
+    await mkdir(join(dir, '.xdg', 'ppr'), { recursive: true });
+    await writeFile(
+      join(dir, '.xdg', 'ppr', 'config.json'),
+      JSON.stringify({ ai: { provider: 'openai', model: 'x', apiKeyEnv: 'sk-or-v1-broken-config-value' } }),
+    );
+    const { code } = await ppr(dir, ['a note written while the key is wrong']);
+    assert.equal(code, 0);
+    assert.match((await ppr(dir, ['ls', '--json'])).stdout, /while the key is wrong/);
+  });
+});
+
+test('pasting a key into ai.apiKeyEnv is refused with the command that works', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['config', 'set', 'ai.apiKeyEnv', 'sk-or-v1-testkeyvalue']);
+    assert.equal(code, 2);
+    assert.match(stderr, /name of an environment variable/);
+    assert.match(stderr, /ppr ai key/);
   });
 });
 

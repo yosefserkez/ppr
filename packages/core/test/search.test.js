@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Vault, MemoryStorage, DEFAULT_CONFIG, searchEntries, setPath, getPath, flattenConfig } from '../dist/index.js';
+import { Vault, MemoryStorage, DEFAULT_CONFIG, searchEntries, setPath, getPath, flattenConfig, keyEnvFor } from '../dist/index.js';
 
 async function seeded(bodies) {
   const vault = await Vault.open({
@@ -68,6 +68,57 @@ test('config paths read, write, and coerce types', () => {
   assert.throws(() => setPath(config, 'capture.maxTags', 'lots'), /number/);
   assert.throws(() => setPath(config, 'ai.provider', 'nonsense'), /Unknown AI provider/);
   assert.throws(() => setPath(config, 'made.up.key', 'x'), /Unknown config/);
+});
+
+test('a key pasted where a variable name belongs is refused, not written', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  const key = 'sk-or-v1-2f45c9a5de610d3475826159ea58892955b79aa98026cc73acf5764';
+
+  assert.throws(() => setPath(config, 'ai.apiKeyEnv', key), /name of an environment variable/);
+  assert.throws(() => setPath(config, 'transcribe.apiKeyEnv', key), /name of an environment variable/);
+  // Google's keys have no punctuation to give them away, so length and case do.
+  assert.throws(() => setPath(config, 'ai.apiKeyEnv', 'AIzaSyD3f8kQ2mNp7rT1vX9wY4zA6bC0eF5gH2j'), /not the key itself/);
+
+  // Real variable names still go through, including the unfashionable ones.
+  for (const name of ['OPENROUTER_API_KEY', 'my_key', '_KEY2']) {
+    assert.equal(setPath(config, 'ai.apiKeyEnv', name).ai.apiKeyEnv, name);
+  }
+});
+
+test('the settings people invent for their key point them at the real one', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  for (const path of ['ai.apiKey', 'ai.key', 'transcribe.apiKey']) {
+    assert.throws(() => setPath(config, path, 'sk-whatever'), (err) => {
+      assert.match(err.message, new RegExp(`no ${path} setting`));
+      assert.match(err.hint, /ppr ai key/, 'the hint is the next thing to type');
+      return true;
+    });
+  }
+});
+
+test('a custom endpoint gets a key variable named after itself', () => {
+  const openrouter = { ...DEFAULT_CONFIG.ai, provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1' };
+  assert.equal(keyEnvFor(openrouter), 'OPENROUTER_API_KEY');
+  assert.equal(keyEnvFor({ ...openrouter, baseUrl: 'https://api.groq.com/openai/v1' }), 'GROQ_API_KEY');
+  assert.equal(keyEnvFor({ ...openrouter, baseUrl: undefined }), 'OPENAI_API_KEY');
+  assert.equal(keyEnvFor({ ...openrouter, apiKeyEnv: 'MINE' }), 'MINE', 'an explicit name always wins');
+
+  // Backends that need no key must not be handed one to go looking for —
+  // including when an apiKeyEnv is left behind by the provider before them.
+  assert.equal(keyEnvFor({ ...DEFAULT_CONFIG.ai, provider: 'ollama' }), undefined);
+  assert.equal(keyEnvFor({ ...openrouter, provider: 'ollama', apiKeyEnv: 'OPENROUTER_API_KEY' }), undefined);
+  assert.equal(keyEnvFor(DEFAULT_CONFIG.ai), undefined);
+
+  // A pasted key is never treated as a name, even though it is set.
+  assert.equal(keyEnvFor({ ...openrouter, apiKeyEnv: 'sk-or-v1-abc123def456ghi' }), 'OPENROUTER_API_KEY');
+});
+
+test('whitespace around a hand-edited value is not sent to a server', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  // A padded model id comes back as someone else's 400, which reads like a
+  // broken model rather than a stray space in a file.
+  assert.equal(setPath(config, 'ai.model', ' openrouter/auto-beta ').ai.model, 'openrouter/auto-beta');
+  assert.equal(setPath(config, 'ai.baseUrl', ' https://openrouter.ai/api/v1\n').ai.baseUrl, 'https://openrouter.ai/api/v1');
 });
 
 test('config flattens to dotted keys for display', () => {

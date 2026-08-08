@@ -7,6 +7,10 @@ import {
   PROVIDER_DEFAULTS,
   WHISPER_MODELS,
   findWhisperModel,
+  keyEnvFor,
+  looksLikeSecret,
+  redactSecret,
+  suggestKeyEnv,
   type Config,
 } from '@ppr/core';
 import {
@@ -95,8 +99,9 @@ const warn = (detail: string, fix?: string): Finding => ({
 const expandHome = (path: string): string =>
   path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
 
-const keyEnvFor = (config: Config): string | undefined =>
-  config.ai.apiKeyEnv ?? PROVIDER_DEFAULTS[config.ai.provider]?.apiKeyEnv;
+/** A key pasted into `apiKeyEnv` instead of a variable name — see `ai.key`. */
+const pastedKey = (config: Config): string | undefined =>
+  config.ai.apiKeyEnv && looksLikeSecret(config.ai.apiKeyEnv) ? config.ai.apiKeyEnv : undefined;
 
 const ollamaUrl = (config: Config): string =>
   config.ai.baseUrl ?? PROVIDER_DEFAULTS.ollama.baseUrl ?? 'http://127.0.0.1:11434';
@@ -218,17 +223,42 @@ const backendCheck: Check = {
 const apiKeyCheck: Check = {
   id: 'ai.key',
   label: 'API key',
-  applies: (ctx) => Boolean(keyEnvFor(ctx.config)),
+  applies: (ctx) => Boolean(keyEnvFor(ctx.config.ai)) || Boolean(pastedKey(ctx.config)),
   async inspect(ctx) {
-    const name = keyEnvFor(ctx.config)!;
-    return ctx.secret(name) ? ok(`${name} found`) : missing(`${name} not set`, `ppr ai key ${name}`);
+    const pasted = pastedKey(ctx.config);
+    if (pasted) {
+      return missing(
+        `ai.apiKeyEnv holds a key (${redactSecret(pasted)}), not a variable name`,
+        'ppr ai key',
+      );
+    }
+    const name = keyEnvFor(ctx.config.ai)!;
+    return ctx.secret(name) ? ok(`${name} found`) : missing(`${name} not set`, 'ppr ai key');
   },
   async repair(ctx) {
-    const name = keyEnvFor(ctx.config)!;
+    const pasted = pastedKey(ctx.config);
+    const name = keyEnvFor(ctx.config.ai) ?? suggestKeyEnv(ctx.config.ai);
+
+    // The key is sitting in a plain config file. Move it before anything else,
+    // rather than asking the user to retype something ppr can already see.
+    if (pasted) {
+      out(color.dim('  Your key is in the config file itself, which is the wrong place for it.'));
+      if (await confirm(`  Move it into the credentials file as ${name}?`, true)) {
+        const path = await saveSecret(name, pasted);
+        await writeSetting(ctx.root, 'ai.apiKeyEnv', name);
+        out(`  ${color.green('✓')} moved to ${path} ${color.dim('(0600, never in the vault)')}`);
+        out(color.dim(`  → ppr ai key ${name} <value>`));
+        out(color.dim('  Rotate it when you get a chance — it has been sitting in plain text.'));
+        await ctx.reload();
+        return true;
+      }
+    }
+
     const already = ctx.secret(name);
     const key = await promptLine(`  ${name}${already ? ' (replacing the stored one)' : ''}: `);
     if (!key) return false;
     const path = await saveSecret(name, key);
+    await writeSetting(ctx.root, 'ai.apiKeyEnv', name);
     out(`  ${color.green('✓')} saved to ${path} ${color.dim('(0600, never in the vault)')}`);
     out(color.dim(`  → ppr ai key ${name} <value>`));
     await ctx.reload();

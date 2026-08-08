@@ -14,7 +14,7 @@ A CLI that keeps notes, logs, and brain dumps as **plain markdown files on disk*
 one file per entry. It adds search, linking, and optional AI on top — without ever
 becoming the thing that owns your notes.
 
-The user is a developer who types faster than they think and wants a record of
+The user is a developer who types faster than they think and wants a record of outcomes and 
 *why* decisions were made. The competition is a text file and `grep`. Anything ppr
 does that a text file plus grep already does well needs to justify itself.
 
@@ -91,10 +91,14 @@ path: normal quit, `ctrl-c`, `SIGTERM`, an editor that crashed, an uncaught thro
 Read stdin only when it is a pipe, socket, or file — never when it is a character
 device. A CLI that hangs in cron is broken. *Enforced by:* `hasStdin()` in `input.ts`.
 
-**I7. Secrets never enter the vault.**
+**I7. Secrets never enter the vault, a config file, or an error message.**
 API keys live in the environment or `~/.config/ppr/credentials.json` (mode 0600).
-The vault is assumed to be in git. *Enforced by:* config stores `apiKeyEnv`, a
-*name*, never a value.
+The vault is assumed to be in git. Config stores `apiKeyEnv`, a *name*, never a
+value — and because everyone pastes the key there once, every path that touches
+it refuses to: `guardSecret()` on the way in, `keyEnvFor()` when reading it back,
+`redactSecret()` before it can reach stderr. *Enforced by:* tests "a key pasted
+where a variable name belongs is refused, not written" and "a key pasted into
+apiKeyEnv is caught, and never echoed back".
 
 **I8. `@ppr/core` imports no platform API.**
 No `node:fs`, no `node:child_process`, no `process.env` for behaviour. Everything

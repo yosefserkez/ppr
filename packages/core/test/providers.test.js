@@ -96,6 +96,24 @@ test('a hosted provider with no key fails before it sends anything', async () =>
   await assert.rejects(() => provider.generate({ prompt: 'hi' }), /No API key/);
 });
 
+test('a key pasted into apiKeyEnv is caught, and never echoed back', async () => {
+  const key = 'sk-or-v1-2f55c9a5de610d3475826159ea58892855b79aa98026cc73acf5762';
+  const provider = createProvider(
+    ai({ provider: 'openai', model: 'x', baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: key }),
+    secrets({}),
+  );
+
+  await assert.rejects(
+    () => provider.generate({ prompt: 'hi' }),
+    (err) => {
+      assert.match(err.message, /not the name of an environment variable/);
+      // The whole point: this text reaches stderr, CI logs, and bug reports.
+      assert.ok(!`${err.message} ${err.hint}`.includes(key), 'the key leaked into the error');
+      return true;
+    },
+  );
+});
+
 test('an API error surfaces the status and body, not a stack trace', async () => {
   await withServer(
     () => ({ status: 429, body: { error: 'rate limited' } }),

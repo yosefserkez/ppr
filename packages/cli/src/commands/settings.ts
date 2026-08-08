@@ -5,13 +5,18 @@ import {
   PprError,
   flattenConfig,
   getPath,
+  keyEnvFor,
+  looksLikeSecret,
   mergeConfig,
+  redactSecret,
   setPath,
   validateConfig,
+  type AIConfig,
   type Config,
 } from '@ppr/core';
 import {
   createTranscriber,
+  credentialsPath,
   findVault,
   globalConfigPath,
   initVault,
@@ -166,21 +171,51 @@ export function aiCommand(): Command {
       withVault(self, async (vault) => {
         const { ai, transcribe } = vault.config;
         const secrets = await loadSecrets();
-        const keyName = ai.apiKeyEnv ?? PROVIDER_DEFAULTS[ai.provider]?.apiKeyEnv;
-        const hasKey = keyName ? Boolean(secrets(keyName)) : true;
+        const pasted = ai.apiKeyEnv && looksLikeSecret(ai.apiKeyEnv) ? ai.apiKeyEnv : undefined;
+        const keyName = keyEnvFor(ai);
+        // Which of the two places won matters when you are debugging a stale key,
+        // and `hasKey` alone cannot tell you.
+        const source = !keyName || pasted
+          ? undefined
+          : process.env[keyName]
+            ? 'environment'
+            : secrets(keyName)
+              ? credentialsPath()
+              : undefined;
 
         if (globals(self).json) {
-          return json({ ai, transcribe, keyAvailable: hasKey, enabled: vault.hasAI });
+          return json({
+            ai,
+            transcribe,
+            keyEnv: keyName,
+            keyAvailable: Boolean(source),
+            keySource: source,
+            ...(pasted ? { problem: 'ai.apiKeyEnv holds a key, not a variable name' } : {}),
+            enabled: vault.hasAI,
+          });
         }
         out(
           table([
             ['provider', `${ai.provider}  ${color.dim(PROVIDER_HELP[ai.provider] ?? '')}`],
             ['model', ai.model || color.dim('—')],
             ...(ai.baseUrl ? [['endpoint', ai.baseUrl] as [string, string]] : []),
-            ...(keyName ? [['key', hasKey ? color.green(`${keyName} ✓`) : color.red(`${keyName} missing`)] as [string, string]] : []),
+            ...(keyName
+              ? [[
+                  'key',
+                  source
+                    ? color.green(`${keyName} ✓  ${color.dim(`from ${source}`)}`)
+                    : color.red(`${keyName} — not set`),
+                ] as [string, string]]
+              : []),
             ['transcription', transcribe.provider],
           ]),
         );
+        if (pasted) {
+          errline(color.red(`ai.apiKeyEnv holds a key (${redactSecret(pasted)}), not a variable name.`));
+          errline(color.dim(`Run \`ppr ai key\` to move it out of your config file.`));
+        } else if (keyName && !source) {
+          out(color.dim(`\nSet it with: ppr ai key  ${color.dim('(or export ')}${keyName}${color.dim(')')}`));
+        }
       }),
     );
 
@@ -247,14 +282,21 @@ export function aiCommand(): Command {
       if (Object.keys(transcribe).length) next.transcribe = transcribe;
       await writeConfigLayer(layerPath, next);
 
-      if (defaults.apiKeyEnv) {
-        const existing = (await loadSecrets())(defaults.apiKeyEnv);
-        if (!existing && (await confirm(`Store an API key for ${defaults.apiKeyEnv}?`, true))) {
+      // Resolve against the endpoint just chosen, so a custom host asks for its
+      // own variable (OPENROUTER_API_KEY) rather than the provider-wide default.
+      const keyName = keyEnvFor({ ...DEFAULT_CONFIG.ai, ...ai } as AIConfig);
+      if (keyName) {
+        const existing = (await loadSecrets())(keyName);
+        if (!existing && (await confirm(`Store an API key for ${keyName}?`, true))) {
           const key = await promptLine('API key: ');
           if (key) {
-            const path = await saveSecret(defaults.apiKeyEnv, key);
-            out(color.dim(`Key saved to ${path} (0600). Keys never go in the vault.`));
+            const path = await saveSecret(keyName, key);
+            ai.apiKeyEnv = keyName;
+            await writeConfigLayer(layerPath, { ...next, ai });
+            out(color.dim(`Key saved to ${path} (0600). Keys never go in the vault or in config.`));
           }
+        } else if (existing) {
+          out(color.dim(`Using the ${keyName} you already have. Replace it with \`ppr ai key\`.`));
         }
       }
 
@@ -265,15 +307,42 @@ export function aiCommand(): Command {
 
   cmd
     .command('key')
-    .description('store an API key in the 0600 credentials file')
-    .argument('<env-var>', 'e.g. ANTHROPIC_API_KEY')
-    .argument('[value]', 'the key; omit to be prompted')
-    .action(async (name: string, value: string | undefined, _flags: unknown, self: Command) => {
-      const key = value ?? (await promptLine(`${name}: `));
+    .description('store an API key outside the vault and outside your config')
+    .argument('[env-var]', 'variable name; worked out from your backend when omitted')
+    .argument('[value]', 'the key itself; omit to be prompted')
+    .action(async (first: string | undefined, second: string | undefined, _flags: unknown, self: Command) => {
+      const g = globals(self);
+      const root = findVault(g.vault ? { explicit: g.vault } : {}).root;
+      const config = await loadConfig(root);
+
+      // Both arguments are optional and either can be given alone, so tell them
+      // apart by shape: a variable name never looks like a key, and vice versa.
+      // That makes `ppr ai key` on its own the answer to "where does it go?".
+      const named = first !== undefined && !looksLikeSecret(first);
+      const name = named ? first : keyEnvFor(config.ai);
+      const given = named ? second : first;
+
+      if (!name) {
+        throw new PprError(
+          'ECONFIG',
+          `The ${config.ai.provider} backend does not use an API key`,
+          'Run `ppr ai setup` to pick one that does, or name the variable yourself: ppr ai key NAME <value>',
+        );
+      }
+
+      const key = given ?? (await promptLine(`${name}: `));
       if (!key) throw new PprError('EINVALID', 'No key given');
       const path = await saveSecret(name, key);
-      if (globals(self).json) json({ name, file: path });
-      else out(`${color.green('✓')} stored ${name} in ${path}`);
+
+      // When ppr picked the name, record it — so the config says out loud which
+      // variable is in play instead of leaving it to an inferred default.
+      const point = !named && config.ai.apiKeyEnv !== name;
+      if (point) await writeSetting(root, 'ai.apiKeyEnv', name);
+
+      if (g.json) return json({ name, file: path, apiKeyEnv: point ? name : config.ai.apiKeyEnv });
+      out(`${color.green('✓')} ${color.bold(name)} stored in ${path} ${color.dim('(0600)')}`);
+      if (point) out(color.dim(`  → ppr config set ai.apiKeyEnv ${name}`));
+      out(color.dim(`  ${name} in your environment overrides this file.`));
     });
 
   cmd

@@ -1,5 +1,5 @@
 import type { AIConfig } from '../config.js';
-import { withProviderDefaults } from '../config.js';
+import { looksLikeSecret, redactSecret, withProviderDefaults } from '../config.js';
 import { PprError } from '../errors.js';
 import type { AIProvider, GenerateRequest } from '../ports.js';
 
@@ -38,12 +38,23 @@ async function post(
 
 const requireKey = (ai: AIConfig, secrets: SecretSource): string => {
   const name = ai.apiKeyEnv ?? '';
+  // The name is echoed in the message below, so a key pasted into `apiKeyEnv`
+  // would leak into stderr, CI logs, and pasted bug reports. Catch it first.
+  if (name && looksLikeSecret(name)) {
+    throw new PprError(
+      'ECONFIG',
+      `ai.apiKeyEnv holds a key (${redactSecret(name)}), not the name of an environment variable`,
+      'Run `ppr ai key` — it stores the key outside your config and points ai.apiKeyEnv at it.',
+    );
+  }
   const key = name ? secrets(name) : undefined;
   if (!key) {
     throw new PprError(
       'ECONFIG',
       `No API key for ${ai.provider}`,
-      `Set ${name || 'the API key env var'}, or run \`ppr ai setup\`.`,
+      name
+        ? `Run \`ppr ai key\` to store one, or export ${name} in your shell.`
+        : 'Run `ppr ai setup` to configure a backend.',
     );
   }
   return key;
