@@ -13,11 +13,12 @@ export * from './entry.js';
 export * from './markdown.js';
 export * from './search.js';
 export * from './links.js';
+export * from './memory.js';
 export * from './navigate.js';
 export * from './models.js';
 export * from './capture.js';
 export { Catalog } from './catalog.js';
-export { Vault, type VaultOptions } from './vault.js';
+export { Vault, type VaultOptions, type LearnOptions, type LearnResult } from './vault.js';
 
 export { MemoryStorage } from './adapters/memory-storage.js';
 

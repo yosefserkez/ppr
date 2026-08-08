@@ -1,16 +1,75 @@
 import type { Clock, AIProvider, Fetcher, Storage, Transcriber, AudioInput } from './ports.js';
 import type { Config } from './config.js';
-import type { Entry, EntryInput, EntryPatch, ListQuery, SearchHit, VaultStats } from './types.js';
+import {
+  MEMORY_KIND,
+  type Entry,
+  type EntryInput,
+  type EntryPatch,
+  type ListQuery,
+  type SearchHit,
+  type VaultStats,
+} from './types.js';
 import { Catalog } from './catalog.js';
-import { applyPatch, createEntry, serializeEntry } from './entry.js';
+import { applyPatch, createEntry, entryPath, serializeEntry, ENTRIES_DIR } from './entry.js';
 import { PprError, noAI } from './errors.js';
 import { backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
+import { factExtra, parseState, toFact, STATE_PATH, type Fact, type VaultState } from './memory.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
-import { wordCount } from './util/text.js';
+import { truncate, wordCount } from './util/text.js';
 import { buildClipEntry, buildDumpEntry } from './capture.js';
 import * as tasks from './ai/tasks.js';
+
+export interface LearnOptions {
+  /** Explicit entries to read. Overrides the incremental window. */
+  entries?: Entry[];
+  /** Loose text, for the piped path. Read in addition to `entries`. */
+  text?: string;
+  since?: Date;
+  /** Re-read the whole journal, ignoring the high-water mark. */
+  all?: boolean;
+  signal?: AbortSignal;
+}
+
+export interface LearnResult {
+  /** Entries read this run. Zero means there was nothing new, not a failure. */
+  scanned: number;
+  learned: Entry[];
+  refined: Entry[];
+  /** Pairs that disagree. `ppr memory review` is where they get settled. */
+  conflicts: Array<{ fact: Entry; with: Entry }>;
+  duplicates: number;
+  /** Entries the model returned nothing usable for. They stay in the window. */
+  unreadable: number;
+}
+
+/** How many known facts a reconcile prompt carries. One-liners are cheap. */
+const FACTS_IN_PROMPT = 150;
+
+/** Characters of source text per extraction call. */
+const EXTRACT_CHUNK_CHARS = 8000;
+
+const mergeIds = (...lists: string[][]): string[] => [...new Set(lists.flat())].filter(Boolean);
+
+/** Groups entries into prompt-sized batches, keeping each entry whole. */
+function chunkEntries(entries: Entry[]): Entry[][] {
+  const chunks: Entry[][] = [];
+  let current: Entry[] = [];
+  let size = 0;
+  for (const entry of entries) {
+    const length = entry.title.length + entry.body.length;
+    if (current.length && size + length > EXTRACT_CHUNK_CHARS) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(entry);
+    size += length;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
 
 export interface VaultOptions {
   /** Human-readable location, for messages only. Storage is already scoped to it. */
@@ -222,19 +281,203 @@ export class Vault {
     return tasks.followUps(text, { provider: this.provider, ...opts });
   }
 
-  /** Pulls durable facts out of text and stores each as a `memory` entry. */
-  async remember(text: string, opts: { signal?: AbortSignal } = {}): Promise<Entry[]> {
+  // ----------------------------------------------------------------- memory
+
+  /** Standing facts, newest first. Retired ones are kept but not returned. */
+  facts(opts: { includeRetired?: boolean } = {}): Fact[] {
+    const all = filterEntries(this.catalog.entries(), { kind: MEMORY_KIND }).map(toFact);
+    return opts.includeRetired ? all : all.filter((f) => f.status === 'current');
+  }
+
+  /** Every entry a fact was drawn from, for `ppr memory why`. */
+  sourcesOf(fact: Fact): Entry[] {
+    return fact.from.map((id) => this.catalog.get(id)).filter((e): e is Entry => Boolean(e));
+  }
+
+  /** Records a fact the user wrote themselves. Nothing automatic rewrites it. */
+  async addFact(text: string): Promise<Entry> {
+    const line = text.trim();
+    if (!line) throw new PprError('EINVALID', 'Nothing to remember');
+    return this.add({ body: line, kind: MEMORY_KIND, title: truncate(line, 70), source: 'manual' });
+  }
+
+  /**
+   * Reads entries and folds what they say into the fact store.
+   *
+   * Incremental by default: everything written since the last run, so this is
+   * the command a cron job invokes. The high-water mark is a convenience —
+   * `--since` and `--all` override it, and losing it costs a re-scan rather
+   * than correctness, because reconciliation absorbs the repeats.
+   */
+  async learn(opts: LearnOptions = {}): Promise<LearnResult> {
     if (!this.provider) throw noAI();
-    const facts = await tasks.extractMemories(text, { provider: this.provider, ...opts });
-    const existing = new Set(
-      this.list({ kind: 'memory' }).map((e) => e.body.trim().toLowerCase()),
-    );
-    const out: Entry[] = [];
-    for (const fact of facts) {
-      if (existing.has(fact.toLowerCase())) continue;
-      out.push(await this.add({ body: fact, kind: 'memory', title: fact }));
+    const signal = opts.signal ? { signal: opts.signal } : {};
+
+    const sources = await this.learnSources(opts);
+    const result: LearnResult = {
+      scanned: sources.length,
+      learned: [],
+      refined: [],
+      conflicts: [],
+      duplicates: 0,
+      unreadable: 0,
+    };
+    if (!sources.length && !opts.text) return result;
+
+    const candidates: tasks.FactCandidate[] = [];
+    // Only entries the model actually understood may advance the mark. A
+    // garbled reply looks exactly like "nothing durable here", and treating it
+    // as such would drop those entries out of the window for good — the one
+    // way an incremental learner can quietly lose your words.
+    const read: Entry[] = [];
+    let stalled = false;
+    for (const chunk of chunkEntries(sources)) {
+      const batch = await tasks.extractFacts(
+        chunk.map((e) => ({ id: e.id, text: `${e.title}\n${e.body}` })),
+        { provider: this.provider, ...signal },
+      );
+      if (!batch.ok) {
+        result.unreadable += chunk.length;
+        stalled = true;
+        continue;
+      }
+      candidates.push(...batch.facts);
+      if (!stalled) read.push(...chunk);
     }
-    return out;
+    if (opts.text?.trim()) {
+      const batch = await tasks.extractFacts([{ text: opts.text }], { provider: this.provider, ...signal });
+      candidates.push(...batch.facts);
+    }
+    if (!candidates.length) {
+      await this.markLearned(read);
+      return result;
+    }
+
+    // Reconcile against what is already known, so a second run over the same
+    // week does not double the store. Only the facts a candidate could
+    // plausibly be about are sent: a few hundred one-liners is a small prompt,
+    // but a vault that has been running for a year is not.
+    const known = this.relevantFacts(candidates.map((c) => c.text));
+    const verdicts = await tasks.reconcileFacts(
+      candidates.map((c) => c.text),
+      known.map((f) => ({ id: f.id, text: f.text })),
+      { provider: this.provider, ...signal },
+    );
+
+    for (const [i, candidate] of candidates.entries()) {
+      const verdict = verdicts[i] ?? { verdict: 'new' as const };
+      const target = verdict.verdict === 'new' ? undefined : this.catalog.get(verdict.of);
+
+      if (!target || verdict.verdict === 'new') {
+        result.learned.push(await this.writeFact(candidate));
+        continue;
+      }
+      if (verdict.verdict === 'duplicate') {
+        result.duplicates++;
+        // The fact was said again, which is worth recording even when the
+        // wording adds nothing: provenance is what `why` has to answer with.
+        await this.addSources(target, candidate.from);
+        continue;
+      }
+      if (verdict.verdict === 'refines') {
+        const fact = toFact(target);
+        // A person's own words are not the model's to improve on.
+        if (fact.origin === 'manual') {
+          result.learned.push(await this.writeFact(candidate));
+          continue;
+        }
+        result.refined.push(
+          await this.update(target.id, {
+            body: verdict.text,
+            title: truncate(verdict.text, 70),
+            extra: factExtra({ from: mergeIds(fact.from, candidate.from) }),
+          }),
+        );
+        continue;
+      }
+      // Contradiction: keep both, flag the pair, decide nothing.
+      const added = await this.writeFact(candidate, { conflicts: [target.id] });
+      const marked = await this.update(target.id, {
+        extra: factExtra({ conflicts: mergeIds(toFact(target).conflicts, [added.id]) }),
+      });
+      result.conflicts.push({ fact: added, with: marked });
+    }
+
+    await this.markLearned(read);
+    return result;
+  }
+
+  /** Pulls durable facts out of loose text — the piped path into `learn`. */
+  async remember(text: string, opts: { signal?: AbortSignal } = {}): Promise<Entry[]> {
+    const result = await this.learn({ text, entries: [], ...opts });
+    return [...result.learned, ...result.refined];
+  }
+
+  private async writeFact(
+    candidate: tasks.FactCandidate,
+    fields: { conflicts?: string[] } = {},
+  ): Promise<Entry> {
+    return this.add({
+      body: candidate.text,
+      kind: MEMORY_KIND,
+      title: truncate(candidate.text, 70),
+      source: 'learned',
+      extra: factExtra({ from: candidate.from, ...fields }),
+    });
+  }
+
+  private async addSources(entry: Entry, from: string[]): Promise<Entry> {
+    const fact = toFact(entry);
+    const merged = mergeIds(fact.from, from);
+    if (merged.length === fact.from.length) return entry;
+    return this.update(entry.id, { extra: factExtra({ ...fact, from: merged }) });
+  }
+
+  /** Which entries this run should read, oldest first. */
+  private async learnSources(opts: LearnOptions): Promise<Entry[]> {
+    if (opts.entries) return opts.entries.filter((e) => e.kind !== MEMORY_KIND);
+    const timeline = this.catalog.timeline();
+    if (opts.since) return filterEntries(timeline, { since: opts.since, order: 'asc' });
+    if (opts.all) return filterEntries(timeline, { order: 'asc' });
+
+    const mark = (await this.readState()).learnedThrough;
+    return filterEntries(mark ? timeline.filter((e) => e.id > mark) : timeline, { order: 'asc' });
+  }
+
+  /**
+   * The known facts worth showing the model. All of them while the store is
+   * small — that is the whole point of one-line facts — and the best matches
+   * once it is not.
+   */
+  private relevantFacts(candidates: string[]): Fact[] {
+    const all = this.facts();
+    if (all.length <= FACTS_IN_PROMPT) return all;
+    const entries = all.map((f) => f.entry);
+    const picked = new Map<string, Entry>();
+    const perCandidate = Math.max(3, Math.floor(FACTS_IN_PROMPT / Math.max(candidates.length, 1)));
+    for (const text of candidates) {
+      for (const hit of searchEntries(entries, text, { limit: perCandidate, now: this.clock.now() })) {
+        picked.set(hit.entry.id, hit.entry);
+      }
+    }
+    return [...picked.values()].slice(0, FACTS_IN_PROMPT).map(toFact);
+  }
+
+  private async readState(): Promise<VaultState> {
+    return parseState(await this.storage.read(STATE_PATH));
+  }
+
+  /** Advances the high-water mark past everything this run read. */
+  private async markLearned(sources: Entry[]): Promise<void> {
+    if (!sources.length) return;
+    const newest = sources.reduce((max, e) => (e.id > max ? e.id : max), sources[0]!.id);
+    const state = await this.readState();
+    if (state.learnedThrough && state.learnedThrough >= newest) return;
+    await this.storage
+      .write(STATE_PATH, `${JSON.stringify({ ...state, learnedThrough: newest }, null, 2)}\n`)
+      .catch(() => {
+        /* a lost marker costs a re-scan, never a fact */
+      });
   }
 
   // ------------------------------------------------------------ maintenance
@@ -255,8 +498,30 @@ export class Vault {
   async reindex(): Promise<number> {
     await this.catalog.invalidate();
     await this.catalog.load();
+    await this.relocateFacts();
     await this.catalog.persist();
     return this.catalog.size();
+  }
+
+  /**
+   * Moves facts written before `memory/` existed out of the journal tree.
+   *
+   * Deliberately narrow: only `kind: memory` files still sitting under
+   * `entries/`. A hand-made file anywhere else is where its author put it, and
+   * "it is just markdown" would mean very little if ppr tidied the tree.
+   */
+  private async relocateFacts(): Promise<Entry[]> {
+    const moved: Entry[] = [];
+    for (const entry of this.catalog.entries()) {
+      if (entry.kind !== MEMORY_KIND || !entry.path.startsWith(`${ENTRIES_DIR}/`)) continue;
+      const next = { ...entry, path: entryPath(entry) };
+      await this.storage.write(next.path, serializeEntry(next));
+      await this.storage.remove(entry.path).catch(() => {});
+      this.catalog.forget(entry);
+      this.catalog.upsert(next, (await this.storage.stat(next.path)) ?? undefined);
+      moved.push(next);
+    }
+    return moved;
   }
 
   /** Flushes the parse cache. Safe to skip; the cache is disposable. */

@@ -1,5 +1,14 @@
 import { Command } from 'commander';
-import { PprError, relativeAge, truncate } from '@ppr/core';
+import {
+  parseWhen,
+  PprError,
+  relativeAge,
+  toFact,
+  truncate,
+  type Entry,
+  type Fact,
+  type LearnResult,
+} from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
 import { color, entryJson, json, out, errline, shortenCitations, shortId } from '../render.js';
@@ -80,38 +89,41 @@ export function askCommand(): Command {
 export function memoryCommand(): Command {
   const cmd = new Command('memory')
     .alias('mem')
-    .description('durable facts distilled out of your entries');
+    .description('standing facts, distilled out of your entries');
 
   cmd
     .command('ls', { isDefault: true })
-    .description('list memories')
-    .option('-n, --limit <n>', 'maximum memories')
-    .action(async (flags: { limit?: string }, self: Command) =>
+    .description('list what ppr knows')
+    .option('-n, --limit <n>', 'maximum facts')
+    .option('-a, --all', 'include facts that have been superseded')
+    .action(async (flags: { limit?: string; all?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
-        const memories = vault.list({
-          kind: 'memory',
-          ...(flags.limit ? { limit: Number(flags.limit) } : {}),
-        });
+        const found = vault.facts(flags.all ? { includeRetired: true } : {});
+        const facts = flags.limit ? found.slice(0, Number(flags.limit)) : found;
         const g = globals(self);
-        if (g.json) return json(memories.map(entryJson));
-        if (!memories.length) {
-          return void out(color.dim('No memories yet. Try `ppr memory learn latest`.'));
+
+        if (g.json) return json(facts.map(factJson));
+        if (g.quiet) return void out(facts.map((f) => f.id).join('\n'));
+        if (!facts.length) {
+          return void out(color.dim('Nothing known yet. Try `ppr memory learn`.'));
         }
-        for (const entry of memories) {
-          out(`${color.dim(shortId(entry.id))}  ${entry.body.split('\n')[0]}`);
+        for (const fact of facts) out(factLine(fact));
+        const conflicted = facts.filter((f) => f.conflicts.length).length;
+        if (conflicted) {
+          errline(color.dim(`\n${conflicted} disagree with something. \`ppr memory review\` to settle them.`));
         }
       }),
     );
 
   cmd
     .command('add')
-    .description('record a memory directly')
+    .description('record a fact directly — learn will never overwrite it')
     .argument('[text...]', 'the fact to remember')
     .action(async (text: string[], _flags: unknown, self: Command) =>
       withVault(self, async (vault) => {
         const body = await resolveText(text);
         if (!body) throw new PprError('EINVALID', 'Nothing to remember');
-        const entry = await vault.add({ body, kind: 'memory', title: truncate(body, 70) });
+        const entry = await vault.addFact(body);
         if (globals(self).json) json(entryJson(entry));
         else errline(`${color.green('✓')} ${color.dim(shortId(entry.id))} ${entry.title}`);
       }),
@@ -119,36 +131,123 @@ export function memoryCommand(): Command {
 
   cmd
     .command('learn')
-    .description('extract durable facts from an entry (or piped text) and store them')
-    .argument('[ref...]', 'entry refs; defaults to the latest entry')
-    .action(async (refs: string[], _flags: unknown, self: Command) =>
+    .description('read new entries and fold what they say into the fact store')
+    .argument('[ref...]', 'specific entries; omit to read everything new')
+    .option('-s, --since <when>', 'read entries after this point (7d, today, 2026-07-01)')
+    .option('-a, --all', 're-read the whole journal, ignoring where it left off')
+    .action(async (refs: string[], flags: { since?: string; all?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         if (!vault.hasAI) {
           throw new PprError(
             'ENOAI',
-            'Extracting memories needs a model',
+            'Extracting facts needs a model',
             'Run `ppr ai setup`, or add them by hand with `ppr memory add`.',
           );
         }
+        const g = globals(self);
         const piped = hasStdin() ? (await readStdin()).trim() : '';
-        // Learning from a memory would only ever re-derive the fact it already
-        // is. `latest` no longer resolves to one, but an explicit ref still can.
-        const sources = piped ? [] : (refs.length ? refs : ['latest']).map((r) => vault.get(r));
-        const usable = sources.filter((e) => e.kind !== 'memory');
-        if (sources.length && !usable.length) {
-          throw new PprError(
-            'EINVALID',
-            'That is already a memory',
-            'Point `learn` at an entry you wrote — or edit the fact directly with `ppr edit`.',
+        const result = await vault.learn({
+          ...(piped ? { text: piped } : {}),
+          ...(refs.length || piped ? { entries: refs.map((r) => vault.get(r)) } : {}),
+          ...(flags.since ? { since: parseSince(flags.since, vault.now()) } : {}),
+          ...(flags.all ? { all: true } : {}),
+        });
+
+        if (g.json) {
+          return json({
+            scanned: result.scanned,
+            duplicates: result.duplicates,
+            learned: result.learned.map(entryJson),
+            refined: result.refined.map(entryJson),
+            conflicts: result.conflicts.map((c) => ({ fact: entryJson(c.fact), with: entryJson(c.with) })),
+          });
+        }
+
+        for (const entry of result.learned) out(`${color.green('+')} ${firstLine(entry)}`);
+        for (const entry of result.refined) out(`${color.cyan('~')} ${firstLine(entry)}`);
+        for (const { fact, with: other } of result.conflicts) {
+          out(`${color.yellow('!')} ${firstLine(fact)}`);
+          out(`  ${color.dim(`disagrees with ${shortId(other.id)}: ${firstLine(other)}`)}`);
+        }
+        if (g.quiet) return;
+        errline(color.dim(summarise(result)));
+      }),
+    );
+
+  cmd
+    .command('why')
+    .description('show the entries a fact came from')
+    .argument('<ref>', 'fact id or a fragment of it')
+    .action(async (ref: string, _flags: unknown, self: Command) =>
+      withVault(self, async (vault) => {
+        const entry = vault.get(ref);
+        if (entry.kind !== 'memory') {
+          throw new PprError('EINVALID', `${shortId(entry.id)} is a ${entry.kind}, not a fact`);
+        }
+        const fact = toFact(entry);
+        const sources = vault.sourcesOf(fact);
+        const g = globals(self);
+
+        if (g.json) return json({ ...factJson(fact), sources: sources.map(entryJson) });
+
+        out(color.bold(fact.text));
+        if (fact.origin === 'manual') return void out(color.dim('\nYou wrote this one yourself.'));
+        if (!sources.length) {
+          return void out(color.dim('\nNo sources recorded — the entries may have been deleted.'));
+        }
+        out('');
+        const now = vault.now();
+        for (const source of sources) {
+          out(
+            `  ${color.dim(shortId(source.id))}  ${truncate(source.title, 56)}  ${color.dim(relativeAge(new Date(source.created), now))}`,
           );
         }
-        const created = await vault.remember(piped || usable.map((e) => e.body).join('\n\n'));
-        const g = globals(self);
-        if (g.json) return json(created.map(entryJson));
-        if (!created.length) return void out(color.dim('Nothing durable in there.'));
-        for (const entry of created) out(`${color.green('+')} ${entry.body.split('\n')[0]}`);
       }),
     );
 
   return cmd;
+}
+
+const firstLine = (entry: Entry): string => entry.body.split('\n')[0] ?? '';
+
+/** Stable projection of a fact, so scripts can depend on the shape. */
+const factJson = (fact: Fact) => ({
+  ...entryJson(fact.entry),
+  text: fact.text,
+  from: fact.from,
+  origin: fact.origin,
+  status: fact.status,
+  ...(fact.conflicts.length ? { conflicts: fact.conflicts } : {}),
+  ...(fact.supersededBy ? { supersededBy: fact.supersededBy } : {}),
+});
+
+function factLine(fact: Fact): string {
+  const mark = fact.status === 'retired' ? color.dim('·') : fact.conflicts.length ? color.yellow('!') : ' ';
+  const hand = fact.origin === 'manual' ? color.dim(' (yours)') : '';
+  const text = fact.status === 'retired' ? color.dim(fact.text) : fact.text;
+  return `${mark} ${color.dim(shortId(fact.id))}  ${text}${hand}`;
+}
+
+/** Says what happened even when nothing did — silence reads as a failure. */
+function summarise(result: LearnResult): string {
+  if (!result.scanned && !result.learned.length) return 'Nothing new to read.';
+  const parts = [`read ${result.scanned} ${result.scanned === 1 ? 'entry' : 'entries'}`];
+  if (result.learned.length) parts.push(`${result.learned.length} new`);
+  if (result.refined.length) parts.push(`${result.refined.length} refined`);
+  if (result.conflicts.length) parts.push(`${result.conflicts.length} to settle`);
+  if (result.duplicates) parts.push(`${result.duplicates} already known`);
+  if (parts.length === 1) parts.push('nothing durable in them');
+  const summary = parts.join(' · ');
+  if (!result.unreadable) return summary;
+  // Not an error: those entries are still queued, and saying so is the
+  // difference between "there was nothing there" and "ask me again".
+  return `${summary}\n${result.unreadable} the model could not read — they stay queued for the next run.`;
+}
+
+function parseSince(when: string, now: Date): Date {
+  const since = parseWhen(when, now);
+  if (!since) {
+    throw new PprError('EINVALID', `Could not understand --since "${when}"`, 'Try: 7d, today, 2026-07-01');
+  }
+  return since;
 }

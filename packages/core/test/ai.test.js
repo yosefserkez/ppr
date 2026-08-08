@@ -5,6 +5,7 @@ import {
   MemoryStorage,
   DEFAULT_CONFIG,
   tasks,
+  toFact,
   heuristicDistill,
   parseJsonLoose,
   extractFromHtml,
@@ -156,18 +157,165 @@ test('recap falls back to a grouped list without a model', async () => {
   assert.match(result.text, /Did a thing/);
 });
 
+/**
+ * The learn pipeline makes two calls: extract, then reconcile. Answering each
+ * by what the system prompt asks for keeps the scripts readable.
+ */
+function learnProvider({ facts = [], verdicts = [] } = {}) {
+  return fakeProvider((req) =>
+    /Decide how each candidate/.test(req.system)
+      ? JSON.stringify({ verdicts })
+      : JSON.stringify({ memories: facts }),
+  );
+}
+
 test('memories are extracted once and never duplicated', async () => {
   const vault = await makeVault({
-    provider: fakeProvider(JSON.stringify({ memories: ['Prefers memcached over redis', 'Sam owns auth'] })),
+    provider: learnProvider({ facts: ['Prefers memcached over redis', 'Sam owns auth'] }),
   });
 
   const first = await vault.remember('some text');
   assert.equal(first.length, 2);
   assert.equal(first[0].kind, 'memory');
 
+  // The model volunteers no verdicts. The exact-match floor still has to catch
+  // the repeat, or a quiet model would double the store on every run.
   const second = await vault.remember('some text again');
   assert.equal(second.length, 0, 'the same fact must not be stored twice');
   assert.equal(vault.list({ kind: 'memory' }).length, 2);
+});
+
+test('entries the model garbles stay queued instead of being marked read', async () => {
+  // The failure this prevents: a mangled reply reads exactly like "nothing
+  // durable in here", so the mark advanced and those entries were never
+  // offered to a model again.
+  const vault = await makeVault({ provider: fakeProvider('{"memories": [ "fact\\": "],') });
+  await vault.add({ body: 'Emily likes chocolate', kind: 'log' });
+
+  const first = await vault.learn();
+  assert.equal(first.unreadable, 1);
+  assert.equal(first.learned.length, 0);
+
+  vault.provider = learnProvider({ facts: ['Emily likes chocolate'] });
+  const second = await vault.learn();
+  assert.equal(second.scanned, 1, 'the entry is still in the window');
+  assert.equal(second.learned.length, 1);
+});
+
+test('shards of a half-parsed response are not stored as facts', async () => {
+  const vault = await makeVault({
+    provider: learnProvider({ facts: ['"from": ["', 'x', 'Emily likes chocolate'] }),
+  });
+  await vault.add({ body: 'note', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.deepEqual(result.learned.map((e) => e.body), ['Emily likes chocolate']);
+});
+
+test('facts live outside the journal tree', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
+  const [fact] = await vault.remember('emily likes chocolate');
+
+  assert.match(fact.path, /^memory\/emily-likes-chocolate-\w{4}\.md$/);
+});
+
+test('a fact records which entries it came from', async () => {
+  const vault = await makeVault({
+    provider: fakeProvider((req) =>
+      /Decide how each candidate/.test(req.system)
+        ? JSON.stringify({ verdicts: [] })
+        : JSON.stringify({
+            memories: [{ fact: 'Emily likes chocolate', from: [/\[(\w{16})\]/.exec(req.prompt)?.[1]] }],
+          }),
+    ),
+  });
+  const source = await vault.add({ body: 'Emily likes chocolate', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.equal(result.scanned, 1);
+  assert.equal(result.learned.length, 1);
+  const fact = toFact(result.learned[0]);
+  assert.deepEqual(fact.from, [source.id]);
+  assert.deepEqual(vault.sourcesOf(fact).map((e) => e.id), [source.id]);
+});
+
+test('an invented source id is not accepted as provenance', async () => {
+  const vault = await makeVault({
+    provider: learnProvider({ facts: [{ fact: 'Emily likes chocolate', from: ['0000000000000000'] }] }),
+  });
+  const source = await vault.add({ body: 'Emily likes chocolate', kind: 'log' });
+  const result = await vault.learn();
+
+  // Falls back to the batch, which is where the fact really came from.
+  assert.deepEqual(toFact(result.learned[0]).from, [source.id]);
+});
+
+test('learn only reads what it has not read before', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['Sam owns auth'] }) });
+  await vault.add({ body: 'Sam owns auth now', kind: 'log' });
+
+  assert.equal((await vault.learn()).scanned, 1);
+  const second = await vault.learn();
+  assert.equal(second.scanned, 0, 'the same entry must not be re-read');
+  assert.equal(second.learned.length, 0);
+
+  await vault.add({ body: 'Rae owns billing', kind: 'log' });
+  assert.equal((await vault.learn()).scanned, 1, 'a new entry is picked up');
+  assert.equal((await vault.learn({ all: true })).scanned, 2, '--all ignores the mark');
+});
+
+test('a refinement rewrites the fact and keeps both sources', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
+  const first = await vault.add({ body: 'emily likes chocolate', kind: 'log' });
+  const [fact] = (await vault.learn()).learned;
+
+  vault.provider = learnProvider({
+    facts: ['Emily likes dark chocolate'],
+    verdicts: [{ i: 1, verdict: 'refines', of: fact.id, text: 'Emily likes dark chocolate' }],
+  });
+  const second = await vault.add({ body: 'specifically dark chocolate', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.equal(result.learned.length, 0);
+  assert.equal(result.refined.length, 1);
+  assert.equal(vault.facts().length, 1, 'a refinement replaces, it does not accumulate');
+  assert.deepEqual(toFact(result.refined[0]).from, [first.id, second.id]);
+});
+
+test('a contradiction keeps both and settles nothing', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ["Emily's birthday is 20 October"] }) });
+  await vault.add({ body: 'emily birthday oct 20', kind: 'log' });
+  const [fact] = (await vault.learn()).learned;
+
+  vault.provider = learnProvider({
+    facts: ["Emily's birthday is 22 October"],
+    verdicts: [{ i: 1, verdict: 'contradicts', of: fact.id }],
+  });
+  await vault.add({ body: 'actually the 22nd', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(vault.facts().length, 2, 'nothing automatic may discard a fact');
+  const [newer, older] = [result.conflicts[0].fact, result.conflicts[0].with];
+  assert.deepEqual(toFact(newer).conflicts, [older.id]);
+  assert.deepEqual(toFact(older).conflicts, [newer.id]);
+});
+
+test('a fact you wrote yourself is never rewritten by the model', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['x'] }) });
+  const mine = await vault.addFact("Emily's birthday is 20 October");
+  assert.equal(toFact(mine).origin, 'manual');
+
+  vault.provider = learnProvider({
+    facts: ["Emily's birthday is 21 October"],
+    verdicts: [{ i: 1, verdict: 'refines', of: mine.id, text: "Emily's birthday is 21 October" }],
+  });
+  await vault.add({ body: 'birthday note', kind: 'log' });
+  const result = await vault.learn();
+
+  assert.equal(vault.get(mine.id).body, "Emily's birthday is 20 October", 'your words stay yours');
+  assert.equal(result.refined.length, 0);
+  assert.equal(result.learned.length, 1, 'the model may add its version alongside');
 });
 
 test('memory never becomes the thing `latest` means', async () => {

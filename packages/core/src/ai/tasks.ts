@@ -247,21 +247,183 @@ Rules:
 - If there is genuinely nothing durable, return an empty list. That is a valid
   answer, and a better one than a vague fact.
 
-Return JSON: {"memories": string[]}`;
+Return JSON: {"memories": [{"fact": string, "from": string[]}]}
+- fact: one sentence, the fact itself and nothing else.
+- from: the ids of the sources it came from, copied exactly from their headings.`;
 
-export async function extractMemories(text: string, opts: TaskOptions = {}): Promise<string[]> {
-  if (!opts.provider) return [];
+/** One source of text to mine for facts. `id` is an entry id when there is one. */
+export interface FactSource {
+  id?: string;
+  text: string;
+}
+
+export interface FactCandidate {
+  text: string;
+  /** Entry ids this fact came from. Empty when the text was piped in. */
+  from: string[];
+}
+
+export interface FactBatch {
+  facts: FactCandidate[];
+  /**
+   * Whether the model was understood at all.
+   *
+   * "These entries hold nothing durable" and "the model returned junk" both
+   * produce no facts, and the caller must not confuse them: the first means
+   * the entries are done with, the second means they still need reading.
+   */
+  ok: boolean;
+}
+
+/**
+ * Pulls candidate facts out of a batch of entries.
+ *
+ * Sources are labelled so the model can say which entry each fact came from,
+ * and the attribution is checked against the batch rather than trusted: a made
+ * up id would put a fact's provenance somewhere it never appeared, and
+ * `ppr memory why` exists precisely so that link can be relied on.
+ */
+export async function extractFacts(
+  sources: FactSource[],
+  opts: TaskOptions & { max?: number } = {},
+): Promise<FactBatch> {
+  const batch = sources.filter((s) => s.text.trim());
+  if (!batch.length) return { facts: [], ok: true };
+  if (!opts.provider) return { facts: [], ok: false };
+  const ids = batch.map((s) => s.id).filter((id): id is string => Boolean(id));
+
+  const labelled = batch
+    .map((s, i) => `[${s.id ?? `source-${i + 1}`}]\n${s.text.trim()}`)
+    .join('\n\n---\n\n');
+
   const raw = await opts.provider.generate({
     system: MEMORY_SYSTEM,
-    prompt: text,
+    prompt: `Sources, each headed by its id:\n\n${labelled}`,
     json: true,
-    maxTokens: 500,
+    maxTokens: 1200,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
+
   const parsed = parseJsonLoose<{ memories?: unknown }>(raw);
-  return Array.isArray(parsed?.memories)
-    ? parsed.memories.map(String).map((m) => m.trim()).filter(Boolean).slice(0, 10)
-    : [];
+  if (!Array.isArray(parsed?.memories)) return { facts: [], ok: false };
+
+  const facts: FactCandidate[] = [];
+  for (const item of parsed.memories.slice(0, opts.max ?? 20)) {
+    const text = typeof item === 'string' ? item.trim() : String((item as { fact?: unknown })?.fact ?? '').trim();
+    // A half-parsed response yields shards of the schema rather than sentences.
+    // They read as facts and would be stored as facts, so drop them.
+    if (text.length < 8 || /^["'{[]|["{[]$/.test(text)) continue;
+    const claimed = asStringList((item as { from?: unknown })?.from, 5).map((s) => s.trim());
+    // An unrecognised id is not provenance. Fall back to the whole batch,
+    // which is true — the fact did come from somewhere in it.
+    const from = claimed.filter((id) => ids.includes(id));
+    facts.push({ text, from: from.length ? from : ids });
+  }
+  return { facts, ok: true };
+}
+
+/**
+ * What to do with a candidate fact given what is already known.
+ *
+ * `contradicts` never resolves itself. A cron job may not overwrite something
+ * you told it, and it may not quietly keep two facts that disagree either —
+ * so it records both and leaves the choice to `ppr memory review` (L17).
+ */
+export type FactVerdict =
+  | { verdict: 'new' }
+  | { verdict: 'duplicate'; of: string }
+  | { verdict: 'refines'; of: string; text: string }
+  | { verdict: 'contradicts'; of: string };
+
+const RECONCILE_SYSTEM = `${VOICE}
+
+Decide how each candidate fact relates to the facts already known.
+
+For each candidate, exactly one verdict:
+- "new" — nothing known covers this.
+- "duplicate" — a known fact already says this, even in different words. Give its id.
+- "refines" — a known fact says this less precisely, and the candidate is a
+  strictly better version of the same fact. Give its id and the text to keep.
+  Only when the two are about the same subject and the same property.
+- "contradicts" — a known fact says something incompatible: a different date,
+  a reversed decision, an opposite preference. Give its id.
+
+Rules:
+- A fact about a different person, project, or property is "new", never a
+  refinement. When two facts can both be true at once, they do not contradict.
+- When unsure between "refines" and "new", answer "new". Losing a fact is worse
+  than keeping two.
+
+Return JSON: {"verdicts": [{"i": number, "verdict": string, "of": string, "text": string}]}
+- i is the candidate's number. Omit "of" and "text" when they do not apply.`;
+
+/**
+ * One verdict per candidate, index-aligned.
+ *
+ * With no model — or a model that returns nonsense — this degrades to exact
+ * text matching, which is weak but never wrong in a way that loses a fact (I2).
+ */
+export async function reconcileFacts(
+  candidates: string[],
+  known: Array<{ id: string; text: string }>,
+  opts: TaskOptions = {},
+): Promise<FactVerdict[]> {
+  if (!candidates.length) return [];
+
+  // Exact repeats are caught with no model involved, always. This is the floor
+  // the model builds on rather than an alternative to it: a provider that
+  // returns an empty list, or nonsense, must not be able to double the store.
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!?]+$/, '');
+  const out: FactVerdict[] = candidates.map((text) => {
+    const hit = known.find((k) => norm(k.text) === norm(text));
+    return hit ? { verdict: 'duplicate' as const, of: hit.id } : { verdict: 'new' as const };
+  });
+
+  if (!opts.provider || !known.length) return out;
+
+  const raw = await opts.provider.generate({
+    system: RECONCILE_SYSTEM,
+    prompt: [
+      'Known facts:',
+      known.map((k) => `[${k.id}] ${k.text}`).join('\n'),
+      '',
+      'Candidates:',
+      candidates.map((c, i) => `${i + 1}. ${c}`).join('\n'),
+    ].join('\n'),
+    json: true,
+    maxTokens: 900,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+
+  const parsed = parseJsonLoose<{ verdicts?: unknown }>(raw);
+  if (!Array.isArray(parsed?.verdicts)) return out;
+
+  const byId = new Map(known.map((k) => [k.id, k]));
+  for (const item of parsed.verdicts) {
+    const row = item as { i?: unknown; verdict?: unknown; of?: unknown; text?: unknown };
+    const index = Number(row.i) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= candidates.length) continue;
+    const of = typeof row.of === 'string' ? row.of.trim() : '';
+    // A verdict that points at a fact which does not exist decides nothing.
+    if (!byId.has(of)) continue;
+
+    switch (row.verdict) {
+      case 'duplicate':
+        out[index] = { verdict: 'duplicate', of };
+        break;
+      case 'contradicts':
+        out[index] = { verdict: 'contradicts', of };
+        break;
+      case 'refines': {
+        const text = typeof row.text === 'string' ? row.text.trim() : '';
+        out[index] = text ? { verdict: 'refines', of, text } : { verdict: 'new' };
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return out;
 }
 
 /** Entries rendered for a model: oldest first, id-tagged so answers can cite. */

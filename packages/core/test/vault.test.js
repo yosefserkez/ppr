@@ -115,6 +115,33 @@ test('append keeps the id and extends the body', async () => {
   assert.match(appended.body, /Start\.\n\nMore later\./);
 });
 
+test('facts left in the journal tree are relocated on reindex', async () => {
+  const { storage } = await makeVault();
+  // A fact written before `memory/` existed: still parses, still resolves,
+  // just in the wrong tree.
+  const stale = createEntry({ body: 'Emily likes chocolate', kind: 'memory', title: 'Emily likes chocolate' });
+  const journalPath = `entries/2026/01/2026-01-01-0900-emily-likes-chocolate-${stale.id.slice(-4)}.md`;
+  await storage.write(journalPath, serializeEntry({ ...stale, path: journalPath }));
+
+  const reopened = await Vault.open({ root: '/memory', storage, config: structuredClone(DEFAULT_CONFIG) });
+  await reopened.reindex();
+
+  assert.equal(await storage.read(journalPath), null);
+  assert.match(reopened.get(stale.id).path, /^memory\//);
+  assert.equal(reopened.facts().length, 1);
+});
+
+test('reindex leaves a hand-placed file exactly where its author put it', async () => {
+  const { storage } = await makeVault();
+  const odd = createEntry({ body: 'Filed by hand', kind: 'note', title: 'Filed by hand' });
+  await storage.write('entries/inbox/whatever.md', serializeEntry({ ...odd, path: 'entries/inbox/whatever.md' }));
+
+  const vault = await Vault.open({ root: '/memory', storage, config: structuredClone(DEFAULT_CONFIG) });
+  await vault.reindex();
+
+  assert.ok(await storage.read('entries/inbox/whatever.md'), 'it is just markdown; ppr does not tidy');
+});
+
 test('stats count what is actually there', async () => {
   const { vault } = await makeVault();
   await vault.add({ body: 'one two three #a', kind: 'log' });

@@ -1,4 +1,5 @@
-import type { Entry, EntryInput, EntryPatch, Kind } from './types.js';
+import { MEMORY_KIND, type Entry, type EntryInput, type EntryPatch, type Kind } from './types.js';
+import { memoryPath } from './memory.js';
 import { parseDocument, serializeDocument } from './markdown.js';
 import { createId, timeFromId } from './util/id.js';
 import { dayKey, timeKey, toLocalISO } from './util/time.js';
@@ -24,8 +25,11 @@ export const ENTRIES_DIR = 'entries';
  *
  * Date-first so the tree sorts and greps well; the id suffix guarantees
  * uniqueness without making the name unreadable.
+ *
+ * Facts are the exception and go to `memory/` instead — see `memoryPath`.
  */
 export function entryPath(entry: Pick<Entry, 'id' | 'created' | 'title' | 'kind'>): string {
+  if (entry.kind === MEMORY_KIND) return memoryPath(entry);
   const d = new Date(entry.created);
   const day = dayKey(d);
   const slug = slugify(entry.title || entry.kind) || 'entry';

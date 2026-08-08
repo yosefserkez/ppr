@@ -194,6 +194,7 @@ terminal is logic in the wrong file.
 | If it is... | It goes in... |
 | --- | --- |
 | A rule about entries, search, links, or the graph | `packages/core/src/` |
+| Anything about facts: shape, paths, provenance, state | `core/src/memory.ts` |
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
@@ -224,6 +225,19 @@ printed can be typed back.
 **Refs.** Everything that takes an entry accepts `latest`, `^2` (second newest), a
 full or partial id, or a title fragment. Ambiguity is an error with candidates
 listed, never a silent guess.
+
+**Fact.** A `kind: memory` entry, living in `memory/<slug>-xxxx.md` — flat and
+undated, because a fact is about a thing rather than a day. The body is the fact,
+one line. Everything else rides in `extra`, which round-trips for free (I3):
+`from` (the entry ids it was extracted from), `status`, `conflicts`,
+`supersededBy`. `source` is `manual` or `learned`, and nothing automatic may
+rewrite a `manual` one.
+
+The store is a **projection**: delete `memory/` and `ppr memory learn --all`
+rebuilds it. That is the property to protect when changing anything here — it
+is what makes the layer trustworthy rather than a second place your data lives.
+`.ppr/state.json` holds the high-water mark (an entry *id*, not a timestamp —
+see L20) so a cron run reads only what is new.
 
 **Config.** Three layers, later wins: `DEFAULT_CONFIG` < `~/.config/ppr/config.json`
 < `<vault>/.ppr/config.json`. Writes persist only the delta. Optional keys with no
@@ -434,6 +448,19 @@ the same act, but the entry point had its own copy of the capture logic, so only
 one of them asked follow-up questions. Both now call `quickLog`. When adding a
 shortcut for an existing command, route it through that command rather than
 reimplementing the short version.
+
+**L20. A second-resolution timestamp cannot order a high-water mark.**
+`created` is stored to the second so it reads well, so two entries written in
+the same second are indistinguishable — and an incremental learner keyed on
+time skipped the second one forever. Ids are time-prefixed and monotonic (L2),
+so compare those instead. Anything that means "everything after X" wants an id.
+
+**L21. A failed model looks exactly like an empty answer.**
+`extractFacts` returning no facts meant both "nothing durable in these entries"
+and "the reply was mangled". Treating them alike advanced the mark past entries
+no model had ever successfully read, and they never came back. Every task that
+can both legitimately return nothing *and* fail must say which happened — hence
+`FactBatch.ok`.
 
 **L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
 announced once in dim text that scrolled away, with no marker showing you were

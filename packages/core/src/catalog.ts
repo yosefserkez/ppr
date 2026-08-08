@@ -1,12 +1,16 @@
 import { MEMORY_KIND, type Entry } from './types.js';
 import type { Storage } from './ports.js';
 import { ENTRIES_DIR, parseEntry } from './entry.js';
+import { MEMORY_DIR } from './memory.js';
 import { ambiguous, notFound } from './errors.js';
 import { isId } from './util/id.js';
 import { slugify } from './util/text.js';
 
 const CACHE_PATH = '.ppr/cache/index.json';
 const CACHE_VERSION = 1;
+
+/** The two trees a vault holds: what happened, and what is true (I12). */
+const ROOTS = [ENTRIES_DIR, MEMORY_DIR];
 
 interface CacheFile {
   version: number;
@@ -31,7 +35,7 @@ export class Catalog {
     // Rebuilt from scratch so a reload reflects deletions, not just additions.
     this.byId.clear();
     const cached = await this.readCache();
-    const files = await this.storage.list(ENTRIES_DIR);
+    const files = (await Promise.all(ROOTS.map((root) => this.storage.list(root)))).flat();
     const seen = new Set<string>();
     const next: CacheFile['files'] = {};
 
