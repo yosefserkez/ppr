@@ -69,14 +69,23 @@ export function askCommand(): Command {
         const result = await vault.ask(question.join(' '), { ...rest, limit: limit ?? 12 });
         const g = globals(self);
 
-        if (g.json) return json({ ...result, used: result.used.map(entryJson) });
+        if (g.json) {
+          return json({ ...result, used: result.used.map(entryJson), facts: result.facts.map(entryJson) });
+        }
 
         out(shortenCitations(result.text));
-        if (flags.sources || !result.ai) {
+        // With no model the answer *is* the source list, so printing it again
+        // underneath would just say everything twice.
+        if (flags.sources) {
           out(`\n${color.bold('Sources')}`);
+          // Facts first: they are current, and an entry may have been
+          // superseded by one of them.
+          for (const fact of result.facts.slice(0, 10)) {
+            out(`  ${color.dim(shortId(fact.id))}  ${color.yellow('fact')}  ${truncate(firstLine(fact), 60)}`);
+          }
           for (const entry of result.used.slice(0, 10)) {
             out(
-              `  ${color.dim(shortId(entry.id))}  ${truncate(entry.title, 56)}  ${color.dim(relativeAge(new Date(entry.created), now))}`,
+              `  ${color.dim(shortId(entry.id))}  ${color.dim(entry.kind.padEnd(4).slice(0, 4))}  ${truncate(entry.title, 50)}  ${color.dim(relativeAge(new Date(entry.created), now))}`,
             );
           }
         }

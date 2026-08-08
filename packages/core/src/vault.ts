@@ -261,24 +261,41 @@ export class Vault {
     return tasks.recap(entries, { provider: this.provider, ...opts });
   }
 
-  /** Retrieval + answer. Retrieval works with no model; the answer needs one. */
+  /**
+   * Retrieval + answer. Retrieval works with no model; the answer needs one.
+   *
+   * Standing facts go in unconditionally rather than being left to lexical
+   * search: "is Emily's birthday soon" shares no word with "Emily's birthday
+   * is 20 October" beyond the name, and a memory layer you have to phrase your
+   * way into is not one you can rely on. A few hundred one-line facts is a
+   * small prompt — that is the whole reason facts are one line.
+   */
   async ask(
     question: string,
     opts: { limit?: number; signal?: AbortSignal } & ListQuery = {},
-  ): Promise<{ text: string; ai: boolean; cited: string[]; used: Entry[] }> {
+  ): Promise<{ text: string; ai: boolean; cited: string[]; used: Entry[]; facts: Entry[] }> {
     const { limit = 12, signal, ...filters } = opts;
     const hits = this.search(question, { ...filters, limit });
     // Thin retrieval still deserves recent context to reason over.
     const used = hits.length ? hits.map((h) => h.entry) : this.list({ ...filters, limit });
+    const facts = this.relevantFacts([question]).map((f) => f.entry);
     const answer = await tasks.ask(question, used, {
       provider: this.provider,
+      now: this.clock.now(),
+      ...(facts.length ? { facts } : {}),
       ...(signal ? { signal } : {}),
     });
-    return { ...answer, used };
+    return { ...answer, used, facts };
   }
 
+  /** A question about what was just written, informed by what is already known. */
   followUps(text: string, opts: { signal?: AbortSignal } = {}) {
-    return tasks.followUps(text, { provider: this.provider, ...opts });
+    const facts = this.relevantFacts([text]).map((f) => f.entry);
+    return tasks.followUps(text, {
+      provider: this.provider,
+      ...(facts.length ? { facts } : {}),
+      ...opts,
+    });
   }
 
   // ----------------------------------------------------------------- memory

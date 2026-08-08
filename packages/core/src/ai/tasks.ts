@@ -163,34 +163,54 @@ Never pad. If a day is thin, say less.\n\nStyle: ${style}`,
 
 const ASK_SYSTEM = `${VOICE}
 
-Answer a question using only the user's journal entries below.
+Answer a question using only what is given below: the user's standing facts,
+and their journal entries.
 
 Rules:
-- Cite the entries you used as [id] right after the claim they support.
-- If the entries do not answer it, say so in one line. Do not guess.
+- Cite the entries and facts you used as [id] right after the claim they support.
+- Facts are current. When an entry and a fact disagree, the fact wins — it is
+  what the user has settled on since.
+- If neither answers it, say so in one line. Do not guess.
 - Quote the user's own words when they said it better than a paraphrase would.
 - Be brief. This is a lookup, not an essay.`;
+
+/** Facts rendered for a model: id-tagged, so an answer can cite one. */
+const factBlock = (facts: Entry[]): string =>
+  facts.map((f) => `[${f.id}] ${f.body.split('\n')[0]}`).join('\n');
 
 export async function ask(
   question: string,
   entries: Entry[],
-  opts: TaskOptions = {},
+  opts: TaskOptions & { facts?: Entry[]; now?: Date } = {},
 ): Promise<{ text: string; ai: boolean; cited: string[] }> {
+  const facts = opts.facts ?? [];
+
   if (!opts.provider) {
+    const lines = [
+      facts.length ? `What ppr knows:\n\n${facts.map((f) => `- [${shortId(f.id)}] ${f.body.split('\n')[0]}`).join('\n')}` : '',
+      entries.length
+        ? `Closest entries:\n\n${entries.map((e) => `- [${shortId(e.id)}] ${e.title}`).join('\n')}`
+        : '',
+    ].filter(Boolean);
     return {
-      text: entries.length
-        ? `No model configured. Closest entries:\n\n${entries
-            .map((e) => `- [${shortId(e.id)}] ${e.title}`)
-            .join('\n')}`
-        : 'No matching entries.',
+      text: lines.length ? `No model configured.\n\n${lines.join('\n\n')}` : 'Nothing matching.',
       ai: false,
-      cited: entries.map((e) => e.id),
+      cited: [...facts, ...entries].map((e) => e.id),
     };
   }
 
   const text = await opts.provider.generate({
     system: ASK_SYSTEM,
-    prompt: `Question: ${question}\n\nEntries:\n\n${transcript(entries, 2400)}`,
+    prompt: [
+      // "Is anything coming up?" is unanswerable without it, and a model that
+      // does not know the date will invent one rather than say so.
+      opts.now ? `Today is ${formatDay(opts.now)} ${opts.now.getFullYear()}.` : '',
+      `Question: ${question}`,
+      facts.length ? `\nStanding facts:\n${factBlock(facts)}` : '',
+      `\nEntries:\n\n${transcript(entries, 2400)}`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
     maxTokens: 900,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
@@ -207,15 +227,21 @@ the reasoning they left out — the tradeoff, the doubt, the thing they assumed.
 Rules:
 - 1 to 3 questions, one line each.
 - Specific to what they wrote. Never generic.
-- Never ask what the entry already answers.
+- Never ask what the entry already answers, or what the known facts already say.
+- A known fact that bears on this is worth asking *about*: connect it, do not
+  repeat it back.
 
 Return JSON: {"questions": string[]}`;
 
-export async function followUps(text: string, opts: TaskOptions = {}): Promise<string[]> {
+export async function followUps(
+  text: string,
+  opts: TaskOptions & { facts?: Entry[] } = {},
+): Promise<string[]> {
   if (!opts.provider) return GENERIC_FOLLOWUPS.slice(0, 1);
+  const facts = opts.facts ?? [];
   const raw = await opts.provider.generate({
     system: FOLLOWUP_SYSTEM,
-    prompt: text,
+    prompt: facts.length ? `Known facts:\n${factBlock(facts)}\n\nJust written:\n${text}` : text,
     json: true,
     maxTokens: 300,
     temperature: 0.5,

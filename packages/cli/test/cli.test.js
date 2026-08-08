@@ -172,9 +172,11 @@ test('everything still works without a model', async () => {
     assert.equal(recap.code, 0);
     assert.match(recap.stdout, /rolled it back/);
 
+    // No model means no answer, but retrieval still has to point somewhere.
     const ask = await ppr(dir, ['ask', 'what happened with 4.2']);
     assert.equal(ask.code, 0);
-    assert.match(ask.stdout, /Sources/);
+    assert.match(ask.stdout, /Closest entries/);
+    assert.match(ask.stdout, /deployed 4\.2 to prod/);
 
     const tags = await ppr(dir, ['tags', '--json']);
     assert.equal(JSON.parse(tags.stdout).find((t) => t.tag === 'release').count, 2);

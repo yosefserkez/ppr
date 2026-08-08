@@ -138,6 +138,39 @@ test('ask cites entry ids and passes them to the model', async () => {
   assert.match(seen[0].prompt, /why did we drop redis/);
 });
 
+test('what ppr knows is always in the answer, not only when the words match', async () => {
+  const seen = [];
+  const vault = await makeVault({ provider: fakeProvider('answer', { record: seen }) });
+  await vault.addFact("Emily's birthday is 20 October");
+  await vault.add({ body: 'Unrelated note about the deploy', kind: 'log' });
+
+  // Shares no word with the fact but the name — lexical retrieval alone would
+  // miss it, which is exactly the case a memory layer has to survive.
+  const answer = await vault.ask('is anything coming up for Emily?');
+  assert.match(seen[0].prompt, /Standing facts/);
+  assert.match(seen[0].prompt, /20 October/);
+  assert.equal(answer.facts.length, 1);
+});
+
+test('follow-up questions see what is already known', async () => {
+  const seen = [];
+  const vault = await makeVault({ provider: fakeProvider(JSON.stringify({ questions: ['q?'] }), { record: seen }) });
+  await vault.addFact('Emily likes chocolate');
+
+  await vault.followUps('bought a birthday present');
+  assert.match(seen[0].prompt, /Known facts/);
+  assert.match(seen[0].prompt, /chocolate/);
+});
+
+test('with no model, ask still surfaces the facts it holds', async () => {
+  const vault = await makeVault();
+  await vault.addFact("Emily's birthday is 20 October");
+
+  const answer = await vault.ask('emily');
+  assert.equal(answer.ai, false);
+  assert.match(answer.text, /20 October/);
+});
+
 test('ask still returns the right entries with no model', async () => {
   const vault = await makeVault();
   await vault.add({ body: 'Dropped redis for latency reasons' });
