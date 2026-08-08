@@ -11,6 +11,7 @@ import {
   type Fact,
   type LearnResult,
   type UpcomingFact,
+  type VaultContext,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
@@ -111,6 +112,76 @@ const briefItem = (item: UpcomingFact) => ({
   when: formatDay(item.date),
   mentions: item.mentions.map((e) => e.title),
 });
+
+/**
+ * `ppr context` — what ppr knows, shaped for another tool's prompt.
+ *
+ * ppr is the layer things go into; the useful thing it does with them is hand
+ * a grounded context to whatever agent you already run, rather than trying to
+ * become one. No model runs here, so the output is instant and identical every
+ * time — which is what makes it safe to staple onto someone else's prompt.
+ *
+ *   ppr context "gift for emily" | claude -p "help me pick something"
+ */
+export function contextCommand(): Command {
+  return new Command('context')
+    .description('everything ppr knows about something, for piping into another tool')
+    .argument('[query...]', 'what it is about; omit for everything')
+    .option('-n, --limit <n>', 'entries to include', '12')
+    .option('--within <days>', 'how far ahead to look for dated facts', '30')
+    .option('--bodies', 'include full entry text, not just titles')
+    .action(async (query: string[], flags: { limit?: string; within?: string; bodies?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        const result = vault.context(query.join(' '), {
+          limit: Number(flags.limit ?? 12),
+          withinDays: Number(flags.within ?? 30),
+        });
+        if (globals(self).json) {
+          return json({
+            ...(result.query ? { query: result.query } : {}),
+            now: vault.now().toISOString(),
+            facts: result.facts.map(factJson),
+            upcoming: result.upcoming.map((u) => ({
+              id: u.fact.id,
+              text: u.fact.text,
+              date: u.date.toISOString().slice(0, 10),
+              days: u.days,
+            })),
+            entries: result.entries.map(entryJson),
+          });
+        }
+        out(renderContext(result, vault.now(), Boolean(flags.bodies)));
+      }),
+    );
+}
+
+/** Markdown, because that is what every model reads best and every human can check. */
+function renderContext(result: VaultContext, now: Date, bodies: boolean): string {
+  const lines: string[] = [];
+
+  if (result.facts.length) {
+    lines.push('## What is known', '');
+    for (const fact of result.facts) lines.push(`- ${fact.text}`);
+    lines.push('');
+  }
+  if (result.upcoming.length) {
+    lines.push('## Coming up', '');
+    for (const item of result.upcoming) {
+      const when = item.days === 0 ? 'today' : item.days === 1 ? 'tomorrow' : `in ${item.days} days`;
+      lines.push(`- ${item.fact.text} — ${formatDay(item.date)}, ${when}`);
+    }
+    lines.push('');
+  }
+  if (result.entries.length) {
+    lines.push('## Entries', '');
+    for (const entry of result.entries) {
+      const age = relativeAge(new Date(entry.created), now);
+      lines.push(`### ${entry.title}`, `${shortId(entry.id)} · ${entry.kind} · ${age} ago`, '');
+      if (bodies) lines.push(entry.body, '');
+    }
+  }
+  return lines.join('\n').trim() || 'Nothing known yet.';
+}
 
 /** `ppr ask` — retrieval always, generation when a model is configured. */
 export function askCommand(): Command {

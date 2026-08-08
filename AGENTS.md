@@ -189,6 +189,26 @@ covered by ordinary unit tests with no pseudo-terminal involved. **Any new
 interactive surface follows the same shape.** Logic that cannot be tested without a
 terminal is logic in the wrong file.
 
+### The memory pipeline
+
+```
+entries/**  ──learn──▶  candidates ──reconcile──▶  memory/**  ──▶  ask · brief · context
+             extract      (facts)     new/dup/         (facts)
+                                      refines/
+                                      contradicts
+```
+
+Not a graph database and not embedding retrieval. The corpus *is* the curated
+part: one-line facts, deduplicated on the way in, small enough that all of them
+fit in a prompt. Retrieval is therefore trivial and offline — send everything
+under `FACTS_IN_PROMPT`, rank lexically above it, and let dates be arithmetic.
+The intelligence is spent on writing the store, not on searching it, which is
+why the store stays legible enough to fix by hand.
+
+`ppr context` is the point of the whole thing: ppr is the layer notes go into,
+and what it does with them is hand another tool a grounded snapshot. It runs no
+model, so it is instant and identical every time.
+
 ### Where does my change go?
 
 | If it is... | It goes in... |

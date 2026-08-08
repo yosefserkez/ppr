@@ -660,3 +660,81 @@ test('the quoted and + capture paths produce identical entries', async () => {
     assert.deepEqual(second.tags, first.tags);
   });
 });
+
+test('a fact you add by hand is stored outside the journal and stays out of it', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'shipped the importer']);
+    const added = await ppr(dir, ['memory', 'add', "Emily's birthday is 20 October"]);
+    assert.equal(added.code, 0);
+
+    // It is a file in memory/, not an entry in the timeline.
+    const [fact] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout);
+    assert.match(fact.path, /^memory\//);
+    assert.equal(fact.origin, 'manual');
+
+    const list = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(list.length, 1, 'a fact is not a thing that happened');
+    assert.equal(list[0].kind, 'log');
+
+    // …but it is still addressable, so `show` and `rm` work on it.
+    const shown = await ppr(dir, ['show', fact.id, '--body']);
+    assert.match(shown.stdout, /20 October/);
+    assert.match((await ppr(dir, ['memory', 'why', fact.id])).stdout, /yourself/);
+  });
+});
+
+test('brief counts down to a dated fact with no model at all', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['memory', 'add', "Priya's birthday is 12 September"]);
+    // `memory add` stores no date; a person editing the file supplies one.
+    const [fact] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout);
+    const path = join(dir, fact.path);
+    const raw = await readFile(path, 'utf8');
+    await writeFile(path, raw.replace(/^---\n/, '---\ndate: 0000-09-12\nrecurs: yearly\n'));
+
+    const { code, stdout } = await ppr(dir, ['brief', '--within', '400', '--json']);
+    assert.equal(code, 0);
+    const [item] = JSON.parse(stdout);
+    assert.match(item.date, /-09-12$/);
+    assert.ok(item.days >= 0 && item.days <= 366);
+
+    assert.match((await ppr(dir, ['brief', '--within', '400', '--plain'])).stdout, /12 Sep/);
+  });
+});
+
+test('context hands another tool everything ppr knows, without a model', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'rewrote the CSV importer today']);
+    await ppr(dir, ['memory', 'add', 'Emily likes dark chocolate']);
+
+    const { code, stdout } = await ppr(dir, ['context', 'emily']);
+    assert.equal(code, 0);
+    assert.match(stdout, /## What is known/);
+    assert.match(stdout, /Emily likes dark chocolate/);
+
+    const parsed = JSON.parse((await ppr(dir, ['context', 'emily', '--json'])).stdout);
+    assert.equal(parsed.query, 'emily');
+    assert.equal(parsed.facts.length, 1);
+    assert.ok(parsed.now);
+  });
+});
+
+test('learning needs a model, and says so instead of failing silently', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'something worth remembering']);
+    const { code, stderr } = await ppr(dir, ['memory', 'learn']);
+    assert.equal(code, 4);
+    assert.match(stderr, /needs a model/);
+    assert.match(stderr, /memory add/, 'the offline way to do it is named');
+  });
+});
+
+test('nothing to settle is a normal outcome, not an error', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['memory', 'add', 'Emily likes chocolate']);
+    const { code, stdout } = await ppr(dir, ['memory', 'review']);
+    assert.equal(code, 0);
+    assert.match(stdout, /Nothing to settle/);
+    assert.equal(JSON.parse((await ppr(dir, ['memory', 'review', '--json'])).stdout).length, 0);
+  });
+});

@@ -29,7 +29,7 @@ import {
   textCommand,
   windowCommands,
 } from './commands/browse.js';
-import { askCommand, briefCommand, memoryCommand, recapCommand } from './commands/think.js';
+import { askCommand, briefCommand, contextCommand, memoryCommand, recapCommand } from './commands/think.js';
 import { aiCommand, configCommand, initCommand, reindexCommand } from './commands/settings.js';
 import { doctorCommand, setupCommand } from './commands/setup.js';
 import { scheduleCommand } from './commands/schedule.js';
@@ -90,6 +90,7 @@ program.addCommand(exportCommand());
 program.addCommand(recapCommand());
 program.addCommand(briefCommand());
 program.addCommand(askCommand());
+program.addCommand(contextCommand());
 program.addCommand(memoryCommand());
 program.addCommand(scheduleCommand());
 

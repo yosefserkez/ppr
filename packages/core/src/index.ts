@@ -18,7 +18,7 @@ export * from './navigate.js';
 export * from './models.js';
 export * from './capture.js';
 export { Catalog } from './catalog.js';
-export { Vault, type VaultOptions, type LearnOptions, type LearnResult, type UpcomingFact } from './vault.js';
+export { Vault, type VaultOptions, type LearnOptions, type LearnResult, type UpcomingFact, type VaultContext } from './vault.js';
 
 export { MemoryStorage } from './adapters/memory-storage.js';
 

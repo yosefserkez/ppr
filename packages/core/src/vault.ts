@@ -57,6 +57,14 @@ export interface LearnResult {
   unreadable: number;
 }
 
+/** A grounded snapshot for another tool's prompt. Assembled without a model. */
+export interface VaultContext {
+  query?: string;
+  facts: Fact[];
+  upcoming: UpcomingFact[];
+  entries: Entry[];
+}
+
 export interface UpcomingFact extends Occurrence {
   /** Entries that have touched this since it last came round. */
   mentions: Entry[];
@@ -361,6 +369,29 @@ export class Vault {
       ...(signal ? { signal } : {}),
     });
     return { ...answer, used, facts };
+  }
+
+  /**
+   * Everything ppr knows that bears on a question, assembled for someone else
+   * to reason with.
+   *
+   * This is the shape of the bet ppr is making: it is the layer things go
+   * *into*, and the useful thing it can do with them is hand another tool a
+   * grounded, deduplicated, human-editable context — not try to become that
+   * tool. No model runs here, so it is instant, offline, and identical every
+   * time, which is what makes it safe to put on the front of someone else's
+   * prompt.
+   */
+  context(query = '', opts: { limit?: number; withinDays?: number } = {}): VaultContext {
+    const limit = opts.limit ?? 12;
+    const text = query.trim();
+    const hits = text ? this.search(text, { limit }) : [];
+    return {
+      ...(text ? { query: text } : {}),
+      facts: text ? this.relevantFacts([text]) : this.facts(),
+      upcoming: this.upcoming({ withinDays: opts.withinDays ?? 30 }),
+      entries: hits.length ? hits.map((h) => h.entry) : this.list({ limit }),
+    };
   }
 
   /** A question about what was just written, informed by what is already known. */
