@@ -94,6 +94,7 @@ export async function buildDumpEntry(
   const result = await distill(source, {
     provider: deps.provider,
     maxTags: deps.config.capture.maxTags,
+    ...(deps.config.capture.autoLink ? { link: true } : {}),
     ...(deps.knownTags?.length ? { context: deps.knownTags.slice(0, 40).join(', ') } : {}),
     ...(deps.signal ? { signal: deps.signal } : {}),
   });

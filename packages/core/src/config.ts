@@ -48,6 +48,15 @@ export interface Config {
     /** Follow URLs found in a dump and attach an extract. */
     followUrls: boolean;
     /**
+     * Wrap names the vault already knows in `[[wikilinks]]` as entries are
+     * written — every kind, not just facts.
+     *
+     * Off by default because it edits your words. On, a model (when there is
+     * one) marks the people and projects it sees, and every later entry links
+     * to them without one, which is what keeps the graph consistent offline.
+     */
+    autoLink: boolean;
+    /**
      * How `ppr write` takes a longer entry. `editor` hands you $EDITOR, where
      * you already know how to move around; `inline` keeps the terminal prompt.
      */
@@ -80,6 +89,7 @@ export const DEFAULT_CONFIG: Config = {
     keepRaw: false,
     maxTags: 5,
     followUrls: true,
+    autoLink: false,
     compose: 'editor',
   },
   display: { color: true, listLimit: 20, interactive: true },

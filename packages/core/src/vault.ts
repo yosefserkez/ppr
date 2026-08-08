@@ -12,7 +12,7 @@ import {
 import { Catalog } from './catalog.js';
 import { applyPatch, createEntry, entryPath, serializeEntry, ENTRIES_DIR } from './entry.js';
 import { PprError, noAI } from './errors.js';
-import { backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
+import { autoLink, backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
 import {
   factExtra,
   factTerms,
@@ -143,10 +143,35 @@ export class Vault {
 
   // ---------------------------------------------------------------- entries
 
+  /**
+   * Auto-linking happens here and only here, so every kind gets it and no two
+   * capture paths can drift (L18). It is deliberately not applied on `update`:
+   * a link you removed by hand should stay removed.
+   */
   async add(input: EntryInput): Promise<Entry> {
-    const entry = createEntry(input, this.clock.now());
+    const body = this.config.capture.autoLink
+      ? autoLink(input.body, this.linkVocabulary())
+      : input.body;
+    const entry = createEntry({ ...input, body }, this.clock.now());
     await this.write(entry);
     return entry;
+  }
+
+  /**
+   * The names worth linking: everything already written as `[[a link]]`, plus
+   * titles short enough to be about a thing rather than an event. A sentence
+   * of a title — "Decided to drop redis, memcached is faster" — names no
+   * entity, and linking it would be noise.
+   */
+  private linkVocabulary(): string[] {
+    const out = new Set<string>();
+    for (const entry of this.catalog.entries()) {
+      for (const link of entry.links) out.add(link);
+      if (entry.kind !== MEMORY_KIND && entry.title.split(/\s+/).length <= 3) {
+        out.add(entry.title.toLowerCase());
+      }
+    }
+    return [...out];
   }
 
   get(ref: string): Entry {
@@ -506,7 +531,7 @@ export class Vault {
     for (const chunk of chunkEntries(sources)) {
       const batch = await tasks.extractFacts(
         chunk.map((e) => ({ id: e.id, text: `${e.title}\n${e.body}` })),
-        { provider: this.provider, ...signal },
+        { provider: this.provider, ...this.linkOption(), ...signal },
       );
       if (!batch.ok) {
         result.unreadable += chunk.length;
@@ -517,7 +542,11 @@ export class Vault {
       if (!stalled) read.push(...chunk);
     }
     if (opts.text?.trim()) {
-      const batch = await tasks.extractFacts([{ text: opts.text }], { provider: this.provider, ...signal });
+      const batch = await tasks.extractFacts([{ text: opts.text }], {
+        provider: this.provider,
+        ...this.linkOption(),
+        ...signal,
+      });
       candidates.push(...batch.facts);
     }
     if (!candidates.length) {
@@ -621,6 +650,10 @@ export class Vault {
     const cleared: Record<string, unknown> = {};
     for (const key of FACT_KEYS) cleared[key] = undefined;
     return { extra: { ...cleared, ...factExtra(fields) } };
+  }
+
+  private linkOption(): { link?: true } {
+    return this.config.capture.autoLink ? { link: true } : {};
   }
 
   private async addSources(entry: Entry, from: string[]): Promise<Entry> {

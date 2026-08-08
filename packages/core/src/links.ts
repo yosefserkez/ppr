@@ -1,5 +1,5 @@
 import type { Entry } from './types.js';
-import { slugify } from './util/text.js';
+import { extractLinks, slugify } from './util/text.js';
 
 /** Every name an entry answers to when written as `[[...]]`. */
 export const linkKeys = (entry: Entry): string[] => [entry.id, slugify(entry.title)].filter(Boolean);
@@ -90,6 +90,60 @@ export function related(entries: Entry[], entry: Entry, limit = 5): Related[] {
   out.sort((a, b) => b.score - a.score || (a.entry.created < b.entry.created ? 1 : -1));
   return out.slice(0, limit);
 }
+
+/**
+ * Regions of a body that must be left exactly as written: fenced and inline
+ * code, existing wikilinks, markdown links, headings, and bare URLs.
+ */
+const PROTECTED =
+  /```[\s\S]*?```|`[^`\n]*`|\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\)|^\s{0,3}#{1,6} .*$|https?:\/\/\S+/gm;
+
+/**
+ * Wraps mentions of things the vault already knows about in `[[wikilinks]]`.
+ *
+ * Deterministic and offline: it links only names that already exist somewhere,
+ * so it can introduce a connection but never invent a subject. The first
+ * mention in a body is linked and the rest are left alone — linking every
+ * occurrence turns a paragraph into a wall of brackets, and the point is to
+ * make the graph navigable, not to decorate the prose.
+ *
+ * The matched text keeps its own capitalisation, so `[[Emily]]` reads as it
+ * was written even though targets are indexed in lower case.
+ */
+export function autoLink(body: string, vocabulary: string[]): string {
+  const terms = [...new Set(vocabulary.map((t) => t.trim()).filter((t) => t.length >= 3))]
+    // Longest first, so "redis migration" wins over "redis".
+    .sort((a, b) => b.length - a.length);
+  if (!terms.length) return body;
+
+  const pattern = new RegExp(`(?<![\\w[])(${terms.map(escapeRegExp).join('|')})(?![\\w\\]])`, 'gi');
+  // Names the body already links are done: the connection exists, and a second
+  // bracket pair further down adds nothing but noise.
+  const linked = new Set(extractLinks(body));
+
+  return mapUnprotected(body, (segment) =>
+    segment.replace(pattern, (match) => {
+      const key = match.toLowerCase();
+      if (linked.has(key)) return match;
+      linked.add(key);
+      return `[[${match}]]`;
+    }),
+  );
+}
+
+/** Applies `fn` to everything outside a protected region, keeping offsets sane. */
+function mapUnprotected(body: string, fn: (segment: string) => string): string {
+  let out = '';
+  let last = 0;
+  for (const match of body.matchAll(PROTECTED)) {
+    out += fn(body.slice(last, match.index));
+    out += match[0];
+    last = match.index + match[0].length;
+  }
+  return out + fn(body.slice(last));
+}
+
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export interface TagCount {
   tag: string;

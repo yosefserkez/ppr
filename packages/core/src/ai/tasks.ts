@@ -18,6 +18,14 @@ export interface TaskOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Added to a prompt when `capture.autoLink` is on. Only names are marked: the
+ * deterministic pass in `links.ts` handles every later mention, so the model's
+ * job is to introduce a subject once, not to decorate the text.
+ */
+const LINK_RULE = `- Wrap the name of each person, project, place, or product in [[double brackets]]
+  the first time it appears. Names only — never verbs, dates, or whole phrases.`;
+
 const VOICE = `You are the user's own note-taking system. You never add commentary,
 never address the user, and never invent facts. You preserve their voice, their
 technical terms, and their conclusions exactly as given.`;
@@ -48,7 +56,7 @@ Return JSON: {"title": string, "body": string, "tags": string[]}
 
 export async function distill(
   text: string,
-  opts: TaskOptions & { maxTags?: number; context?: string } = {},
+  opts: TaskOptions & { maxTags?: number; context?: string; link?: boolean } = {},
 ): Promise<Distilled> {
   const source = text.trim();
   if (!source) throw new PprError('EINVALID', 'Nothing to distill');
@@ -67,7 +75,7 @@ export async function distill(
     .join('\n');
 
   const raw = await opts.provider.generate({
-    system: DISTILL_SYSTEM,
+    system: opts.link ? `${DISTILL_SYSTEM}\n${LINK_RULE}` : DISTILL_SYSTEM,
     prompt,
     json: true,
     maxTokens: Math.min(4096, Math.max(512, Math.ceil(source.length / 2))),
@@ -318,7 +326,7 @@ export interface FactBatch {
  */
 export async function extractFacts(
   sources: FactSource[],
-  opts: TaskOptions & { max?: number } = {},
+  opts: TaskOptions & { max?: number; link?: boolean } = {},
 ): Promise<FactBatch> {
   const batch = sources.filter((s) => s.text.trim());
   if (!batch.length) return { facts: [], ok: true };
@@ -330,7 +338,7 @@ export async function extractFacts(
     .join('\n\n---\n\n');
 
   const raw = await opts.provider.generate({
-    system: MEMORY_SYSTEM,
+    system: opts.link ? `${MEMORY_SYSTEM}\n${LINK_RULE}` : MEMORY_SYSTEM,
     prompt: `Sources, each headed by its id:\n\n${labelled}`,
     json: true,
     maxTokens: 1200,
