@@ -73,8 +73,16 @@ export interface UpcomingFact extends Occurrence {
 /** How many known facts a reconcile prompt carries. One-liners are cheap. */
 const FACTS_IN_PROMPT = 150;
 
-/** Characters of source text per extraction call. */
-const EXTRACT_CHUNK_CHARS = 8000;
+/**
+ * Characters of source text per extraction call.
+ *
+ * Small on purpose. A whole month in one prompt fits comfortably inside any
+ * context window and still extracts badly: two runs over the same 29 entries
+ * returned 17 facts and 20 facts, overlapping but neither complete. Attention
+ * per entry is the scarce resource, not tokens. A day's entries — the size a
+ * cron actually sees — stays a single call either way.
+ */
+const EXTRACT_CHUNK_CHARS = 3000;
 
 const mergeIds = (...lists: string[][]): string[] => [...new Set(lists.flat())].filter(Boolean);
 

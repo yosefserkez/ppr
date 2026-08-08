@@ -293,6 +293,16 @@ Return JSON: {"memories": [{"fact": string, "from": string[], "date": string, "r
 - recurs: "yearly" for anything that comes round every year, a birthday or an
   anniversary. Leave it out otherwise.`;
 
+/**
+ * Output budget for a task whose reply grows with its input.
+ *
+ * Generous on purpose: an over-large ceiling costs nothing (models stop when
+ * they are done), while an under-sized one truncates the JSON and throws the
+ * whole batch away.
+ */
+const budgetFor = (inputChars: number): number =>
+  Math.min(8000, Math.max(1200, Math.ceil(inputChars / 2)));
+
 /** One source of text to mine for facts. `id` is an entry id when there is one. */
 export interface FactSource {
   id?: string;
@@ -345,7 +355,11 @@ export async function extractFacts(
     system: opts.link ? `${MEMORY_SYSTEM}\n${LINK_RULE}` : MEMORY_SYSTEM,
     prompt: `Sources, each headed by its id:\n\n${labelled}`,
     json: true,
-    maxTokens: 1200,
+    // Scaled to the batch. A fixed ceiling truncated the JSON on a full day of
+    // entries, and a half-written object is indistinguishable from a model
+    // that failed — so a backfill reported "nothing durable" over and over
+    // while the model was answering correctly every time (L22).
+    maxTokens: budgetFor(labelled.length),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
 
@@ -457,7 +471,7 @@ export async function reconcileFacts(
       candidates.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ].join('\n'),
     json: true,
-    maxTokens: 900,
+    maxTokens: Math.min(4000, 400 + candidates.length * 140),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
 
@@ -546,7 +560,7 @@ export async function brief(
           .join('\n'),
       )
       .join('\n\n'),
-    maxTokens: 600,
+    maxTokens: Math.min(2000, 300 + items.length * 90),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   return text.trim() ? { text: text.trim(), ai: true } : { text: heuristicBrief(items), ai: false };

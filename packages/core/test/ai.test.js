@@ -262,6 +262,22 @@ test('a fact that opens with a wikilink is a fact, not debris', async () => {
   assert.deepEqual(result.learned[0].links, ['sam']);
 });
 
+test('the extraction budget grows with the batch it is given', async () => {
+  // A fixed ceiling truncated the JSON on a real day of entries, and a
+  // half-written object is indistinguishable from a model that failed — so a
+  // backfill kept reporting "nothing durable" while the model answered fine.
+  const seen = [];
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ memories: ['Emily likes chocolate'] }), { record: seen }),
+  });
+  await vault.add({ body: 'x'.repeat(6000), kind: 'log' });
+  await vault.add({ body: 'short one', kind: 'log' });
+  await vault.learn();
+
+  const extraction = seen.find((req) => /durable facts/.test(req.system));
+  assert.ok(extraction.maxTokens >= 3000, `budget was ${extraction.maxTokens} for a 6k-char batch`);
+});
+
 test('facts live outside the journal tree', async () => {
   const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
   const [fact] = await vault.remember('emily likes chocolate');
