@@ -18,7 +18,7 @@ export * from './navigate.js';
 export * from './models.js';
 export * from './capture.js';
 export { Catalog } from './catalog.js';
-export { Vault, type VaultOptions, type LearnOptions, type LearnResult } from './vault.js';
+export { Vault, type VaultOptions, type LearnOptions, type LearnResult, type UpcomingFact } from './vault.js';
 
 export { MemoryStorage } from './adapters/memory-storage.js';
 
@@ -30,7 +30,7 @@ export {
   type ProviderFactory,
   type SecretSource,
 } from './ai/providers.js';
-export { heuristicDistill, heuristicRecap } from './ai/fallback.js';
+export { heuristicBrief, heuristicDistill, heuristicRecap } from './ai/fallback.js';
 export { parseJsonLoose } from './ai/json.js';
 
 export * from './util/text.js';

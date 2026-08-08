@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import {
+  formatDay,
+  heuristicBrief,
   parseWhen,
   PprError,
   relativeAge,
@@ -8,6 +10,7 @@ import {
   type Entry,
   type Fact,
   type LearnResult,
+  type UpcomingFact,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
@@ -53,6 +56,60 @@ export function recapCommand(): Command {
   );
   return cmd;
 }
+
+/**
+ * `ppr brief` — what is about to come round.
+ *
+ * `recap` looks backward at what happened; this looks forward at what is true
+ * and nearly due. Which facts qualify is arithmetic over their dates, so this
+ * works with no model at all — the model only writes the sentence.
+ */
+export function briefCommand(): Command {
+  return new Command('brief')
+    .description('what is coming up, from the facts ppr holds')
+    .option('--within <days>', 'how far ahead to look', '30')
+    .option('--plain', 'skip the model and print the dates')
+    .action(async (flags: { within?: string; plain?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        const withinDays = Number(flags.within ?? 30);
+        if (!Number.isFinite(withinDays)) throw new PprError('EINVALID', '--within must be a number');
+        const g = globals(self);
+
+        if (flags.plain || g.json) {
+          const items = vault.upcoming({ withinDays });
+          if (g.json) {
+            return json(
+              items.map((item) => ({
+                id: item.fact.id,
+                text: item.fact.text,
+                date: item.date.toISOString().slice(0, 10),
+                days: item.days,
+                ...(item.ordinal ? { ordinal: item.ordinal } : {}),
+                recurs: item.fact.recurs ?? null,
+                mentions: item.mentions.map(entryJson),
+              })),
+            );
+          }
+          if (!items.length) return void out(color.dim('Nothing coming up.'));
+          return void out(heuristicBrief(items.map(briefItem)));
+        }
+
+        const result = await vault.brief({ withinDays });
+        if (!result.items.length) return void out(color.dim('Nothing coming up.'));
+        out(result.text);
+        if (!g.quiet && !result.ai && vault.hasAI) {
+          errline(color.dim('The model returned nothing usable — these are the dates themselves.'));
+        }
+      }),
+    );
+}
+
+const briefItem = (item: UpcomingFact) => ({
+  text: item.fact.text,
+  days: item.days,
+  when: formatDay(item.date),
+  mentions: item.mentions.map((e) => e.title),
+});
 
 /** `ppr ask` — retrieval always, generation when a model is configured. */
 export function askCommand(): Command {

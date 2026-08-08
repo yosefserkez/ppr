@@ -89,3 +89,21 @@ export const GENERIC_FOLLOWUPS = [
   'What would you check first if this turns out to be wrong?',
   'What did you learn that you did not know this morning?',
 ];
+
+/**
+ * The no-model brief. Everything that matters — which facts are due, how soon,
+ * and whether they have been thought about — was decided by arithmetic, so
+ * this loses only the phrasing.
+ */
+export function heuristicBrief(
+  items: Array<{ text: string; days: number; when: string; mentions: string[] }>,
+): string {
+  return items
+    .map((item) => {
+      const when =
+        item.days === 0 ? 'today' : item.days === 1 ? 'tomorrow' : `in ${item.days} days`;
+      const quiet = item.mentions.length ? '' : '\n  nothing logged about it';
+      return `${item.text}\n  ${item.when} — ${when}${quiet}`;
+    })
+    .join('\n\n');
+}

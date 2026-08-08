@@ -29,9 +29,10 @@ import {
   textCommand,
   windowCommands,
 } from './commands/browse.js';
-import { askCommand, memoryCommand, recapCommand } from './commands/think.js';
+import { askCommand, briefCommand, memoryCommand, recapCommand } from './commands/think.js';
 import { aiCommand, configCommand, initCommand, reindexCommand } from './commands/settings.js';
 import { doctorCommand, setupCommand } from './commands/setup.js';
+import { scheduleCommand } from './commands/schedule.js';
 import { helpCommand, versionCommand } from './commands/meta.js';
 
 const EXIT_CODES: Record<string, number> = {
@@ -87,8 +88,10 @@ program.addCommand(exportCommand());
 
 // Think
 program.addCommand(recapCommand());
+program.addCommand(briefCommand());
 program.addCommand(askCommand());
 program.addCommand(memoryCommand());
+program.addCommand(scheduleCommand());
 
 // Settings
 program.addCommand(initCommand());

@@ -1,11 +1,12 @@
 import type { AIProvider } from '../ports.js';
 import type { Entry } from '../types.js';
 import { PprError } from '../errors.js';
+import { parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
 import { formatDay } from '../util/time.js';
 import { asStringList, parseJsonLoose } from './json.js';
-import { GENERIC_FOLLOWUPS, heuristicDistill, heuristicRecap } from './fallback.js';
+import { GENERIC_FOLLOWUPS, heuristicBrief, heuristicDistill, heuristicRecap } from './fallback.js';
 
 /**
  * Every task takes an optional provider. When it is absent — or when the model
@@ -273,9 +274,12 @@ Rules:
 - If there is genuinely nothing durable, return an empty list. That is a valid
   answer, and a better one than a vague fact.
 
-Return JSON: {"memories": [{"fact": string, "from": string[]}]}
+Return JSON: {"memories": [{"fact": string, "from": string[], "date": string, "recurs": string}]}
 - fact: one sentence, the fact itself and nothing else.
-- from: the ids of the sources it came from, copied exactly from their headings.`;
+- from: the ids of the sources it came from, copied exactly from their headings.
+- date: YYYY-MM-DD, only when the fact *is* a calendar date — a birthday, an
+  anniversary, a deadline. Use the year given; never guess one. Omit otherwise.
+- recurs: "yearly" when the date comes round every year. Omit otherwise.`;
 
 /** One source of text to mine for facts. `id` is an entry id when there is one. */
 export interface FactSource {
@@ -287,6 +291,9 @@ export interface FactCandidate {
   text: string;
   /** Entry ids this fact came from. Empty when the text was piped in. */
   from: string[];
+  /** `YYYY-MM-DD`, validated. Absent when the fact carries no date. */
+  date?: string;
+  recurs?: FactRecurrence;
 }
 
 export interface FactBatch {
@@ -343,7 +350,13 @@ export async function extractFacts(
     // An unrecognised id is not provenance. Fall back to the whole batch,
     // which is true — the fact did come from somewhere in it.
     const from = claimed.filter((id) => ids.includes(id));
-    facts.push({ text, from: from.length ? from : ids });
+    const date = parseFactDate((item as { date?: unknown })?.date);
+    facts.push({
+      text,
+      from: from.length ? from : ids,
+      ...(date ? { date } : {}),
+      ...(date && (item as { recurs?: unknown })?.recurs === 'yearly' ? { recurs: 'yearly' as const } : {}),
+    });
   }
   return { facts, ok: true };
 }
@@ -450,6 +463,66 @@ export async function reconcileFacts(
     }
   }
   return out;
+}
+
+const BRIEF_SYSTEM = `${VOICE}
+
+Write a short heads-up from facts that are about to come round.
+
+Rules:
+- One short line per item, in the order given. No preamble, no sign-off.
+- Say when it is, in days or weeks. The number of days is given; use it.
+- When nothing has been logged about an item, that is the point of mentioning
+  it — say so plainly, and ask the one question worth asking.
+- Use what else is known about the person or thing when it is relevant to that
+  question. Do not restate facts for their own sake.
+- Never invent a suggestion that needs information you were not given. No
+  shopping lists, no links, no prices.
+- Under 15 words per line where you can.`;
+
+export interface BriefItem {
+  /** The fact itself, one line. */
+  text: string;
+  days: number;
+  /** `Mon 20 Oct`, already formatted for the user's locale-independent view. */
+  when: string;
+  ordinal?: number;
+  /** Titles of entries that have touched this since it last came round. */
+  mentions: string[];
+  /** Other facts about the same subject, for a question worth asking. */
+  related: string[];
+}
+
+/**
+ * Phrasing only. Which items are due was decided by arithmetic before this ran,
+ * so a missing or broken model costs the wording and never the heads-up.
+ */
+export async function brief(
+  items: BriefItem[],
+  opts: TaskOptions = {},
+): Promise<{ text: string; ai: boolean }> {
+  if (!items.length) return { text: 'Nothing coming up.', ai: false };
+  if (!opts.provider) return { text: heuristicBrief(items), ai: false };
+
+  const text = await opts.provider.generate({
+    system: BRIEF_SYSTEM,
+    prompt: items
+      .map((item) =>
+        [
+          `- ${item.text}`,
+          `  when: ${item.when}, in ${item.days} ${item.days === 1 ? 'day' : 'days'}`,
+          item.ordinal ? `  this will be number ${item.ordinal}` : '',
+          `  logged since last time: ${item.mentions.length ? item.mentions.join('; ') : 'nothing'}`,
+          item.related.length ? `  also known: ${item.related.join('; ')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+      .join('\n\n'),
+    maxTokens: 600,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+  return text.trim() ? { text: text.trim(), ai: true } : { text: heuristicBrief(items), ai: false };
 }
 
 /** Entries rendered for a model: oldest first, id-tagged so answers can cite. */

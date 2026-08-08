@@ -13,11 +13,23 @@ import { Catalog } from './catalog.js';
 import { applyPatch, createEntry, entryPath, serializeEntry, ENTRIES_DIR } from './entry.js';
 import { PprError, noAI } from './errors.js';
 import { backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
-import { factExtra, parseState, toFact, STATE_PATH, type Fact, type VaultState } from './memory.js';
+import {
+  factExtra,
+  factTerms,
+  mentionScore,
+  nextOccurrence,
+  parseState,
+  toFact,
+  STATE_PATH,
+  type Fact,
+  type Occurrence,
+  type VaultState,
+} from './memory.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
 import { truncate, wordCount } from './util/text.js';
+import { formatDay } from './util/time.js';
 import { buildClipEntry, buildDumpEntry } from './capture.js';
 import * as tasks from './ai/tasks.js';
 
@@ -42,6 +54,11 @@ export interface LearnResult {
   duplicates: number;
   /** Entries the model returned nothing usable for. They stay in the window. */
   unreadable: number;
+}
+
+export interface UpcomingFact extends Occurrence {
+  /** Entries that have touched this since it last came round. */
+  mentions: Entry[];
 }
 
 /** How many known facts a reconcile prompt carries. One-liners are cheap. */
@@ -262,6 +279,38 @@ export class Vault {
   }
 
   /**
+   * What is about to come round, phrased.
+   *
+   * Which facts are due is arithmetic and already decided by `upcoming()`, so
+   * a missing model costs the wording and nothing else (I2).
+   */
+  async brief(
+    opts: { withinDays?: number; signal?: AbortSignal } = {},
+  ): Promise<{ text: string; ai: boolean; items: UpcomingFact[] }> {
+    const items = this.upcoming(opts.withinDays !== undefined ? { withinDays: opts.withinDays } : {});
+    const result = await tasks.brief(
+      items.map((item) => ({
+        text: item.fact.text,
+        days: item.days,
+        when: formatDay(item.date),
+        ...(item.ordinal ? { ordinal: item.ordinal } : {}),
+        mentions: item.mentions.map((e) => e.title),
+        related: this.relatedFacts(item.fact).map((f) => f.text),
+      })),
+      { provider: this.provider, ...(opts.signal ? { signal: opts.signal } : {}) },
+    );
+    return { ...result, items };
+  }
+
+  /** Other facts that look like they are about the same subject. */
+  private relatedFacts(fact: Fact, limit = 4): Fact[] {
+    const others = this.facts().filter((f) => f.id !== fact.id);
+    if (!others.length) return [];
+    return searchEntries(others.map((f) => f.entry), fact.text, { limit, now: this.clock.now() })
+      .map((hit) => toFact(hit.entry));
+  }
+
+  /**
    * Retrieval + answer. Retrieval works with no model; the answer needs one.
    *
    * Standing facts go in unconditionally rather than being left to lexical
@@ -309,6 +358,48 @@ export class Vault {
   /** Every entry a fact was drawn from, for `ppr memory why`. */
   sourcesOf(fact: Fact): Entry[] {
     return fact.from.map((id) => this.catalog.get(id)).filter((e): e is Entry => Boolean(e));
+  }
+
+  /**
+   * Dated facts falling inside a window, soonest first. No model involved.
+   *
+   * Each carries what the journal has said about it since it last came round,
+   * because "her birthday is in two weeks" and "her birthday is in two weeks
+   * and you have not mentioned a present" are different notifications, and
+   * only the second is worth being interrupted by.
+   */
+  upcoming(opts: { withinDays?: number; now?: Date } = {}): UpcomingFact[] {
+    const now = opts.now ?? this.clock.now();
+    const within = opts.withinDays ?? 30;
+
+    return this.facts()
+      .map((fact) => nextOccurrence(fact, now))
+      .filter((o): o is Occurrence => Boolean(o) && o!.days <= within)
+      .sort((a, b) => a.days - b.days)
+      .map((occurrence) => ({ ...occurrence, mentions: this.mentionsSince(occurrence) }));
+  }
+
+  /**
+   * Entries touching this fact since it last came round.
+   *
+   * Deliberately not ranked search: a brief that claims you have been thinking
+   * about someone's birthday because an unrelated note shared a common word is
+   * worse than one that says nothing. Two distinctive words, or one for a fact
+   * that only has one to give.
+   */
+  private mentionsSince(occurrence: Occurrence): Entry[] {
+    const since = new Date(occurrence.date);
+    since.setFullYear(since.getFullYear() - (occurrence.fact.recurs === 'yearly' ? 1 : 5));
+    const needed = Math.min(2, factTerms(occurrence.fact.text).length);
+    if (!needed) return [];
+
+    return filterEntries(this.catalog.timeline(), { since })
+      .filter((entry) => !occurrence.fact.from.includes(entry.id))
+      .map((entry) => ({ entry, score: mentionScore(`${entry.title} ${entry.body}`, occurrence.fact) }))
+      .filter((hit) => hit.score >= needed)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((hit) => hit.entry);
   }
 
   /** Records a fact the user wrote themselves. Nothing automatic rewrites it. */
@@ -407,7 +498,12 @@ export class Vault {
           await this.update(target.id, {
             body: verdict.text,
             title: truncate(verdict.text, 70),
-            extra: factExtra({ from: mergeIds(fact.from, candidate.from) }),
+            // `extra` merges, so a date the refinement did not mention is kept
+            // rather than dropped — a better wording must not lose structure.
+            extra: factExtra({
+              from: mergeIds(fact.from, candidate.from),
+              ...(candidate.date ? { date: candidate.date, ...(candidate.recurs ? { recurs: candidate.recurs } : {}) } : {}),
+            }),
           }),
         );
         continue;
@@ -439,7 +535,12 @@ export class Vault {
       kind: MEMORY_KIND,
       title: truncate(candidate.text, 70),
       source: 'learned',
-      extra: factExtra({ from: candidate.from, ...fields }),
+      extra: factExtra({
+        from: candidate.from,
+        ...(candidate.date ? { date: candidate.date } : {}),
+        ...(candidate.recurs ? { recurs: candidate.recurs } : {}),
+        ...fields,
+      }),
     });
   }
 
