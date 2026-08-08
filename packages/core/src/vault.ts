@@ -16,6 +16,7 @@ import { backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
 import {
   factExtra,
   factTerms,
+  FACT_KEYS,
   mentionScore,
   nextOccurrence,
   parseState,
@@ -402,6 +403,69 @@ export class Vault {
       .map((hit) => hit.entry);
   }
 
+  /**
+   * Facts that disagree, as unique pairs.
+   *
+   * Learning records these and settles none of them, so this is the queue
+   * `ppr memory review` works through. A pair with a missing side is dropped
+   * rather than reported: deleting one of two conflicting facts *is* an answer.
+   */
+  conflicts(): Array<[Fact, Fact]> {
+    const byId = new Map(this.facts({ includeRetired: true }).map((f) => [f.id, f]));
+    const seen = new Set<string>();
+    const pairs: Array<[Fact, Fact]> = [];
+
+    for (const fact of byId.values()) {
+      if (fact.status !== 'current') continue;
+      for (const otherId of fact.conflicts) {
+        const other = byId.get(otherId);
+        if (!other || other.status !== 'current') continue;
+        const key = [fact.id, other.id].sort().join(':');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push([fact, other]);
+      }
+    }
+    return pairs;
+  }
+
+  /**
+   * Settles a disagreement by keeping one side.
+   *
+   * The loser is retired, not deleted: it stays on disk, in git, and in
+   * `ppr memory ls --all`, because "we used to think her birthday was the
+   * 22nd" is sometimes the thing you need to see.
+   */
+  async keepFact(keepId: string, dropId: string): Promise<{ kept: Entry; retired: Entry }> {
+    const keep = toFact(this.catalog.resolve(keepId));
+    const drop = toFact(this.catalog.resolve(dropId));
+
+    const retired = await this.update(
+      drop.id,
+      this.factPatch({
+        ...drop,
+        status: 'retired',
+        supersededBy: keep.id,
+        conflicts: drop.conflicts.filter((id) => id !== keep.id),
+      }),
+    );
+    const kept = await this.update(
+      keep.id,
+      this.factPatch({ ...keep, conflicts: keep.conflicts.filter((id) => id !== drop.id) }),
+    );
+    return { kept, retired };
+  }
+
+  /** Both are true after all. Unlinks the pair and leaves them alone. */
+  async keepBoth(aId: string, bId: string): Promise<[Entry, Entry]> {
+    const a = toFact(this.catalog.resolve(aId));
+    const b = toFact(this.catalog.resolve(bId));
+    return [
+      await this.update(a.id, this.factPatch({ ...a, conflicts: a.conflicts.filter((id) => id !== b.id) })),
+      await this.update(b.id, this.factPatch({ ...b, conflicts: b.conflicts.filter((id) => id !== a.id) })),
+    ];
+  }
+
   /** Records a fact the user wrote themselves. Nothing automatic rewrites it. */
   async addFact(text: string): Promise<Entry> {
     const line = text.trim();
@@ -500,7 +564,10 @@ export class Vault {
             title: truncate(verdict.text, 70),
             // `extra` merges, so a date the refinement did not mention is kept
             // rather than dropped — a better wording must not lose structure.
-            extra: factExtra({
+            // Spread the existing fact first: a better wording must not drop
+            // a date or a provenance trail it simply did not mention.
+            ...this.factPatch({
+              ...fact,
               from: mergeIds(fact.from, candidate.from),
               ...(candidate.date ? { date: candidate.date, ...(candidate.recurs ? { recurs: candidate.recurs } : {}) } : {}),
             }),
@@ -510,9 +577,10 @@ export class Vault {
       }
       // Contradiction: keep both, flag the pair, decide nothing.
       const added = await this.writeFact(candidate, { conflicts: [target.id] });
-      const marked = await this.update(target.id, {
-        extra: factExtra({ conflicts: mergeIds(toFact(target).conflicts, [added.id]) }),
-      });
+      const marked = await this.update(
+        target.id,
+        this.factPatch({ ...toFact(target), conflicts: mergeIds(toFact(target).conflicts, [added.id]) }),
+      );
       result.conflicts.push({ fact: added, with: marked });
     }
 
@@ -544,11 +612,22 @@ export class Vault {
     });
   }
 
+  /**
+   * A patch that makes the memory fields say exactly what is passed, rather
+   * than merging over what was there. Without this, clearing a settled
+   * conflict would leave the old pointer behind.
+   */
+  private factPatch(fields: Parameters<typeof factExtra>[0]): EntryPatch {
+    const cleared: Record<string, unknown> = {};
+    for (const key of FACT_KEYS) cleared[key] = undefined;
+    return { extra: { ...cleared, ...factExtra(fields) } };
+  }
+
   private async addSources(entry: Entry, from: string[]): Promise<Entry> {
     const fact = toFact(entry);
     const merged = mergeIds(fact.from, from);
     if (merged.length === fact.from.length) return entry;
-    return this.update(entry.id, { extra: factExtra({ ...fact, from: merged }) });
+    return this.update(entry.id, this.factPatch({ ...fact, from: merged }));
   }
 
   /** Which entries this run should read, oldest first. */

@@ -124,6 +124,12 @@ export function parseFactDate(value: unknown): string | undefined {
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
+/**
+ * The `extra` keys the memory layer owns. Everything else in `extra` belongs to
+ * whoever put it there and is never touched (I3).
+ */
+export const FACT_KEYS = ['from', 'status', 'conflicts', 'supersededBy', 'date', 'recurs'] as const;
+
 /** The `extra` block for a fact, with empty fields left out rather than nulled. */
 export function factExtra(fields: {
   from?: string[];

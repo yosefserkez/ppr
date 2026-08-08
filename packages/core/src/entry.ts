@@ -80,6 +80,20 @@ export function createEntry(input: EntryInput, now: Date = new Date()): Entry {
   return entry;
 }
 
+/**
+ * Patching `extra` merges, so keys ppr does not own survive (I3). Setting a key
+ * to `undefined` is how you remove one — without that there is no way to clear
+ * a field, and a settled conflict would keep pointing at the fact it settled.
+ */
+function mergeExtra(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...base, ...patch };
+  for (const [key, value] of Object.entries(out)) if (value === undefined) delete out[key];
+  return out;
+}
+
 export function applyPatch(entry: Entry, patch: EntryPatch, now: Date = new Date()): Entry {
   const body = patch.body !== undefined ? patch.body.trim() : entry.body;
   const explicitTags = patch.tags ?? entry.tags;
@@ -93,7 +107,7 @@ export function applyPatch(entry: Entry, patch: EntryPatch, now: Date = new Date
     kind: patch.kind ?? entry.kind,
     title: (patch.title ?? entry.title).trim() || 'Untitled',
     updated: toLocalISO(now),
-    extra: patch.extra ? { ...entry.extra, ...patch.extra } : entry.extra,
+    extra: patch.extra ? mergeExtra(entry.extra, patch.extra) : entry.extra,
   };
   if (patch.source !== undefined) next.source = patch.source;
   if (patch.pinned !== undefined) next.pinned = patch.pinned;

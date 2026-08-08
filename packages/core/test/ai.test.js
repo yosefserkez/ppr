@@ -385,3 +385,63 @@ test('follow-up questions degrade to a generic prompt', async () => {
   assert.equal(questions.length, 1);
   assert.ok(questions[0].length > 10);
 });
+
+test('settling a conflict retires the loser and unlinks the pair', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ["Emily's birthday is 20 October"] }) });
+  await vault.add({ body: 'oct 20', kind: 'log' });
+  const [first] = (await vault.learn()).learned;
+
+  vault.provider = learnProvider({
+    facts: ["Emily's birthday is 22 October"],
+    verdicts: [{ i: 1, verdict: 'contradicts', of: first.id }],
+  });
+  await vault.add({ body: 'actually the 22nd', kind: 'log' });
+  const second = (await vault.learn()).conflicts[0].fact;
+
+  assert.equal(vault.conflicts().length, 1);
+  const { kept, retired } = await vault.keepFact(second.id, first.id);
+
+  assert.equal(toFact(vault.get(retired.id)).status, 'retired');
+  assert.equal(toFact(vault.get(retired.id)).supersededBy, kept.id);
+  // The pointer has to go, or the pair keeps showing up as unsettled forever.
+  assert.deepEqual(toFact(vault.get(kept.id)).conflicts, []);
+  assert.deepEqual(toFact(vault.get(retired.id)).conflicts, []);
+
+  assert.equal(vault.conflicts().length, 0);
+  assert.equal(vault.facts().length, 1, 'the retired fact leaves the working set');
+  assert.equal(vault.facts({ includeRetired: true }).length, 2, 'but it is still on disk');
+});
+
+test('two facts that turn out to both be true are simply unlinked', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
+  await vault.add({ body: 'a', kind: 'log' });
+  const [first] = (await vault.learn()).learned;
+
+  vault.provider = learnProvider({
+    facts: ['Emily likes marzipan'],
+    verdicts: [{ i: 1, verdict: 'contradicts', of: first.id }],
+  });
+  await vault.add({ body: 'b', kind: 'log' });
+  const second = (await vault.learn()).conflicts[0].fact;
+
+  await vault.keepBoth(first.id, second.id);
+  assert.equal(vault.conflicts().length, 0);
+  assert.equal(vault.facts().length, 2);
+  assert.equal(toFact(vault.get(first.id)).status, 'current');
+});
+
+test('deleting one side of a disagreement settles it', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: ['The staging database is Postgres 14'] }) });
+  await vault.add({ body: 'a', kind: 'log' });
+  const [first] = (await vault.learn()).learned;
+
+  vault.provider = learnProvider({
+    facts: ['The staging database is Postgres 16'],
+    verdicts: [{ i: 1, verdict: 'contradicts', of: first.id }],
+  });
+  await vault.add({ body: 'b', kind: 'log' });
+  await vault.learn();
+
+  await vault.remove(first.id);
+  assert.equal(vault.conflicts().length, 0, 'a dangling pointer is not an open question');
+});

@@ -14,6 +14,7 @@ import {
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
+import { select } from '../ui/select.js';
 import { color, entryJson, json, out, errline, shortenCitations, shortId } from '../render.js';
 
 type RecapStyle = 'standup' | 'weekly' | 'narrative';
@@ -241,6 +242,52 @@ export function memoryCommand(): Command {
     );
 
   cmd
+    .command('review')
+    .description('settle facts that disagree with each other')
+    .action(async (_flags: unknown, self: Command) =>
+      withVault(self, async (vault) => {
+        const pairs = vault.conflicts();
+        const g = globals(self);
+
+        if (g.json) {
+          return json(pairs.map(([a, b]) => ({ a: factJson(a), b: factJson(b) })));
+        }
+        if (!pairs.length) return void out(color.dim('Nothing to settle.'));
+
+        let settled = 0;
+        for (const [a, b] of pairs) {
+          // Re-read: settling one pair can retire a fact that appears in the next.
+          const current = vault.conflicts().find(([x, y]) => x.id === a.id && y.id === b.id);
+          if (!current) continue;
+
+          const choice = await select<Resolution>({
+            title: `${color.yellow('!')} These disagree:`,
+            choices: [
+              { label: truncate(a.text, 60), value: { keep: a.id, drop: b.id } },
+              { label: truncate(b.text, 60), value: { keep: b.id, drop: a.id } },
+              { label: 'both are true', value: 'both', hint: 'unlink them and keep each' },
+              { label: 'decide later', value: 'skip', hint: 'leave the pair flagged' },
+            ],
+          }).catch(() => null);
+
+          if (!choice || choice.value === 'skip') continue;
+          if (choice.value === 'both') {
+            await vault.keepBoth(a.id, b.id);
+          } else {
+            const { kept, retired } = await vault.keepFact(choice.value.keep, choice.value.drop);
+            errline(color.dim(`  kept ${shortId(kept.id)}, retired ${shortId(retired.id)}`));
+          }
+          settled++;
+        }
+        errline(
+          settled
+            ? `${color.green('✓')} settled ${settled} of ${pairs.length}`
+            : color.dim('Nothing settled.'),
+        );
+      }),
+    );
+
+  cmd
     .command('why')
     .description('show the entries a fact came from')
     .argument('<ref>', 'fact id or a fragment of it')
@@ -273,6 +320,9 @@ export function memoryCommand(): Command {
 
   return cmd;
 }
+
+/** What `ppr memory review` can do with a disagreeing pair. */
+type Resolution = { keep: string; drop: string } | 'both' | 'skip';
 
 const firstLine = (entry: Entry): string => entry.body.split('\n')[0] ?? '';
 
