@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Entry, type Vault, parseReminder, truncate, PprError } from '@ppr/core';
+import { parseReminder, truncate, PprError, type Entry, type Vault } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
 import { canPush, handToReminders, pushDecision } from '../porcelain.js';
 import { dayFlag, globals, withVault } from '../context.js';
@@ -62,7 +62,36 @@ async function finish(vault: Vault, entry: Entry, cmd: Command, flags: CaptureFl
   } else {
     errline(`${color.green('✓')} ${color.dim(shortId(result.id))} ${result.title}`);
   }
+  if (!g.json && !g.quiet) sayIfItContinues(vault, result);
   return result;
+}
+
+/**
+ * One dim line when what was just written is not the start of something.
+ *
+ * The moment it is worth knowing a thought has come back is the moment you
+ * finish writing it down — later you have to remember to ask. But an
+ * unrequested line has to be right nearly every time or it becomes something
+ * to ignore, so the bar is high and `Vault.continues()` owns it: a wikilink
+ * this entry actually resolved or a relatedness score twice the browsing
+ * floor, and a third entry, because a pair is a coincidence. Pure graph
+ * arithmetic over a catalog that is already loaded, and the expensive half is
+ * skipped for the captures that continue nothing — which is nearly all of
+ * them.
+ *
+ * Never on `--json` or `-q` (I10 — a caller parsing an entry is not being
+ * chatted to) and never at the cost of the write: the markdown is already on
+ * disk and a bug in here may not turn a successful capture into an error
+ * (I2's shape).
+ */
+function sayIfItContinues(vault: Vault, entry: Entry): void {
+  try {
+    const size = vault.continues(entry);
+    if (!size) return;
+    errline(color.dim(`  ↳ continues a thread (${size} entries) — ppr thread ${shortId(entry.id)}`));
+  } catch {
+    /* a line nobody asked for is not worth an exit code */
+  }
 }
 
 /**

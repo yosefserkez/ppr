@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Vault, MemoryStorage, DEFAULT_CONFIG, continuesThread, gapWords, threadGaps } from '../dist/index.js';
+import { Vault, MemoryStorage, DEFAULT_CONFIG, gapWords, threadGaps } from '../dist/index.js';
 
 async function makeVault(overrides = {}) {
   const vault = await Vault.open({
@@ -152,12 +152,20 @@ test('the capture nudge waits for a third entry, and for a real connection', asy
   const vault = await makeVault();
   const first = await vault.add(on('2026-01-05', 'Coffee subscription idea', { title: 'Coffee subscription' }));
   const second = await vault.add(on('2026-01-06', 'costing [[Coffee subscription]] out', { title: 'Unit economics' }));
-  assert.equal(continuesThread(vault.thread(second.id), second.id), null, 'a pair is a coincidence');
+  assert.equal(vault.continues(second), null, 'a pair is a coincidence');
 
-  const third = await vault.add(on('2026-01-07', 'back to [[Coffee subscription]] and [[Unit economics]]', { title: 'The margin' }));
-  assert.equal(continuesThread(vault.thread(third.id), third.id), 3, 'the third time is a line of thought');
+  // One link back to the hub, which is the ordinary shape: the third thing
+  // written about something usually points at the first, not at both.
+  const third = await vault.add(on('2026-01-07', 'back to [[Coffee subscription]]', { title: 'The margin' }));
+  assert.equal(vault.continues(third), 3, 'the third time is a line of thought');
 
   const stray = await vault.add(on('2026-01-08', 'lunch was fine', { title: 'Lunch' }));
-  assert.equal(continuesThread(vault.thread(stray.id), stray.id), null);
+  assert.equal(vault.continues(stray), null);
+
+  // Near a thread is not on it: a shared tag and a shared word reach the
+  // browsing floor and come nowhere near the bar for speaking unprompted.
+  await vault.add(on('2026-01-09', 'the office coffee machine #coffee', { title: 'Coffee machine' }));
+  const weak = await vault.add(on('2026-01-10', 'the coffee machine is still broken #coffee', { title: 'Coffee machine again' }));
+  assert.equal(vault.continues(weak), null);
   assert.ok(first);
 });

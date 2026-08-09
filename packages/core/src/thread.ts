@@ -290,23 +290,31 @@ const NUDGE_RELATED_MIN = 8;
 /**
  * How big the thread is, when a just-written entry clearly continues one.
  *
- * Only the entry's *own* neighbours count — one hop, and either a wikilink it
- * actually resolved or a relatedness score twice the browsing floor. Two of
- * them, because one prior entry is a pair and a pair is a coincidence; the
- * third time something comes back it is a line of thought.
+ * Two questions, and both have to answer yes. Is this entry *tied* to
+ * something — one of its own neighbours, reached by a wikilink it actually
+ * resolved or by a relatedness score twice the browsing floor? And is there a
+ * thread to continue: three entries, because two that touch are a pair and a
+ * pair is a coincidence. The third time something comes back it is a line of
+ * thought.
  *
- * The number handed back is the whole thread, since that is what
- * `ppr thread <id>` will show, and a count that disagreed with the command it
- * names would be worse than saying nothing.
+ * Deliberately not "two strong ties": the ordinary shape is a hub everything
+ * links back to, where the third entry has exactly one link and is obviously
+ * the third thing written about it.
+ *
+ * The cheap question is asked first and the walk only happens when the answer
+ * was yes, because this runs after every single capture and almost every
+ * capture is the start of nothing. The number handed back is the whole thread,
+ * since that is what `ppr thread <id>` will show and a count that disagreed
+ * with the command it names would be worse than saying nothing.
  */
-export function continuesThread(thread: Thread, entryId: string): number | null {
-  const near = thread.entries.filter(
-    (m) =>
-      m.entry.id !== entryId &&
-      m.hops === 1 &&
-      (m.reason === 'linked' || m.score >= NUDGE_RELATED_MIN),
+export function continuesThread(pool: Entry[], entry: Entry): number | null {
+  const seed = seedMember(entry, 'seed');
+  const tied = neighbours(pool, seed).some(
+    (m) => m.reason === 'linked' || m.score >= NUDGE_RELATED_MIN,
   );
-  return near.length >= 2 ? thread.entries.length : null;
+  if (!tied) return null;
+  const thread = walkThread(pool, [seed]);
+  return thread.length >= 3 ? thread.length : null;
 }
 
 /**
@@ -329,17 +337,8 @@ export function threadSeeds(
   query: string,
   opts: { now?: Date; limit?: number } = {},
 ): { seeds: ThreadMember[]; seededBy: 'ref' | 'query' } {
-  const asSeed = (entry: Entry, reason: 'seed' | 'matched'): ThreadMember => ({
-    entry,
-    reason,
-    why: reason === 'seed' ? 'the entry you named' : 'matched',
-    hops: 0,
-    score: 0,
-    strength: 1,
-  });
-
   const named = namedEntry(pool, query);
-  if (named) return { seeds: [asSeed(named, 'seed')], seededBy: 'ref' };
+  if (named) return { seeds: [seedMember(named, 'seed')], seededBy: 'ref' };
 
   const hits = searchEntries(pool, query, {
     limit: opts.limit ?? SEED_LIMIT,
@@ -347,10 +346,21 @@ export function threadSeeds(
   });
   const best = hits[0]?.score ?? 0;
   return {
-    seeds: hits.filter((h) => h.score >= best * SEED_FLOOR).map((h) => asSeed(h.entry, 'matched')),
+    seeds: hits
+      .filter((h) => h.score >= best * SEED_FLOOR)
+      .map((h) => seedMember(h.entry, 'matched')),
     seededBy: 'query',
   };
 }
+
+const seedMember = (entry: Entry, reason: 'seed' | 'matched'): ThreadMember => ({
+  entry,
+  reason,
+  why: reason === 'seed' ? 'the entry you named' : 'matched',
+  hops: 0,
+  score: 0,
+  strength: 1,
+});
 
 /** The one entry a ref names, or nothing if the words are not a ref at all. */
 function namedEntry(pool: Entry[], query: string): Entry | undefined {

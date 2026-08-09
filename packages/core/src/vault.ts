@@ -40,6 +40,7 @@ import {
   type ParsedReminder,
 } from './remind.js';
 import {
+  continuesThread,
   threadFacts,
   threadGaps,
   threadSeeds,
@@ -606,6 +607,18 @@ export class Vault {
       facts: threadFacts(this.catalog.entries(), entries),
       gaps: threadGaps(entries.map((m) => m.entry)),
     };
+  }
+
+  /**
+   * How big the thread this entry joins is, when it plainly joins one.
+   *
+   * For the line a capture prints without being asked, so the bar is high and
+   * the cheap half of the question is asked first — see `continuesThread`. A
+   * fact is on no timeline (I12) and can continue nothing.
+   */
+  continues(entry: Entry): number | null {
+    if (entry.kind === MEMORY_KIND) return null;
+    return continuesThread(filterEntries(this.catalog.entries()), entry);
   }
 
   /**

@@ -1758,3 +1758,39 @@ test('no thread is said out loud, with the nearest entries instead of an invente
     assert.match(near.stdout, /coffee machine/);
   });
 });
+
+test('a thought coming back for the third time says so, once, on stderr', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['write', '-T', 'Redis migration', 'the redis migration is going ahead']);
+    const second = await ppr(dir, ['+', 'planning the [[redis migration]] rollout']);
+    assert.doesNotMatch(second.stderr, /continues a thread/, 'two entries are a pair, not a thread');
+
+    const third = await ppr(dir, ['+', 'rolled back the [[redis migration]] at 2am']);
+    assert.match(third.stderr, /continues a thread \(3 entries\)/);
+    assert.match(third.stderr, /ppr thread \w{6}/, 'and says how to read it');
+    assert.doesNotMatch(third.stdout, /continues a thread/, 'stdout is still only the entry (I10)');
+
+    // The count is the thread the command it names will show.
+    const id = /ppr thread (\w{6})/.exec(third.stderr)[1];
+    assert.equal((await ppr(dir, ['thread', id, '-q'])).stdout.trim().split('\n').length, 3);
+
+    // Nothing in common but the English language.
+    const stray = await ppr(dir, ['+', 'lunch was fine and the weather held']);
+    assert.doesNotMatch(stray.stderr, /continues a thread/);
+  });
+});
+
+test('a capture that is being parsed is never chatted to', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['write', '-T', 'Redis migration', 'the redis migration is going ahead']);
+    await ppr(dir, ['+', 'planning the [[redis migration]] rollout']);
+
+    const asJson = await ppr(dir, ['--json', '+', 'rolled back the [[redis migration]]']);
+    assert.doesNotMatch(asJson.stderr, /continues a thread/);
+    assert.ok(JSON.parse(asJson.stdout).id, 'and stdout is exactly the entry');
+
+    const quiet = await ppr(dir, ['-q', '+', 'still on the [[redis migration]]']);
+    assert.doesNotMatch(quiet.stderr, /continues a thread/);
+    assert.match(quiet.stdout.trim(), /^\w{16}$/);
+  });
+});
