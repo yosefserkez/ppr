@@ -9,6 +9,8 @@
 | `commands/think.ts` | What ppr does with entries: recap, brief, ask, context, memory |
 | `commands/schedule.ts` | Putting a ppr command on the OS scheduler |
 | `commands/settings.ts` | init, config, ai, doctor, reindex |
+| `commands/hooks.ts` | Registering an event → command, in the user config layer |
+| `commands/plugins.ts` | Reporting what is wired to ppr: hooks, intents, `ppr-*`, settings |
 
 A genuinely new category earns a new file. Five commands in the wrong file is
 worse than a fourth file.
@@ -60,6 +62,21 @@ progress message. `-q` means ids only, one per line, for piping.
 works in any position, and `program.option()` in `index.ts` so it appears in
 `--help`. Check the name does not already mean something to a subcommand — see
 lesson L9 in AGENTS.md.
+
+**If your command writes anything outside `Storage`, handle `--dry-run`.**
+Everything that goes through the vault is covered for free: `withVault` wraps
+the Storage port in a recorder, and `runChild` records instead of spawning. The
+exceptions are the commands that write a config file, a plist, or a directory —
+`init`, `config set`, `hooks add/rm`, `schedule add/rm`. Each calls `would(…)`
+from `dryrun.ts` with the *artifact* it would have produced (the config delta,
+the plist path and its calendar entry) and then returns without writing.
+
+A command that downloads or installs calls `refuseDryRun()` instead: there is no
+honest preview of an install. `ppr doctor` is the dry run for `ppr setup`.
+
+Three things a dry run must never fake, because faking them makes the preview
+worthless: the model still runs, `$EDITOR` still opens, and an error is still an
+error with its exit code.
 
 ## Errors
 

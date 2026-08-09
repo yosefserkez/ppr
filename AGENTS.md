@@ -285,10 +285,18 @@ not the first.
 | **`Entry.extra`** | A field on an entry that ppr must not eat. Round-trips verbatim (I3) | `entry.ts` `OWNED` |
 | **`--json`** (pull) | Your program asks ppr a question and acts on the answer | every command |
 | **Events** (push) | Your program reacts to a write it did not make | `core/src/events.ts` |
-| **Hooks** | Wiring an event to a command, per user | `~/.config/ppr/config.json` |
+| **Hooks** | Wiring an event to a command, per user | `ppr hooks add`, over `~/.config/ppr/config.json` |
 | **`ppr-foo` on PATH** | A new *subcommand*, in any language | `cli/src/external.ts` |
 | **Conventional names** | Rebinding what `--notify` / `--push` mean | `cli/src/porcelain.ts` |
 | **`plugins.<name>.*`** | Settings for a tool ppr has never heard of | `core/src/config.ts` |
+
+`ppr plugins` is the map of all of it on a given machine — which commands are
+listening to which events, what `--push` and `--notify` resolve to today, every
+`ppr-*` installed, which `plugins.<name>` sections are set. It stores nothing
+and scans PATH with the dispatcher's own `findOnPath`, so it cannot drift from
+what actually runs; a report that disagreed with reality would be worse than
+none. `--dry-run` answers the other half of the same question — not "what is
+wired" but "what would this do" — and is described in §6.
 
 **Events.** Eight names, coarse and permanent: `entry.created`,
 `entry.updated`, `entry.removed`, `entry.completed`, `fact.learned`,
@@ -366,7 +374,9 @@ source of truth (I1), so the markdown is the address.
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
 | What ppr announces when it writes something | `core/src/events.ts` |
 | Running somebody else's program, at all | `cli/src/child.ts` — nowhere else |
-| Wiring an event to a configured command | `cli/src/hooks.ts` |
+| Wiring an event to a configured command, and registering one | `cli/src/hooks.ts` |
+| What a command would have done instead of doing it | `cli/src/dryrun.ts` |
+| Reporting what is wired up on this machine | `cli/src/commands/plugins.ts` |
 | What `--notify` / `--push` resolve to, and when | `cli/src/porcelain.ts` |
 | Talking to macOS: AppleScript, its escaping, a hint | `plugins/` — not ppr |
 | A new command or flag | `packages/cli/src/commands/` |
@@ -460,10 +470,30 @@ stack trace reach a user — there is a test asserting that.
 Exit codes: `2` invalid input · `3` not found / ambiguous · `4` no vault, no AI, bad
 config · `5` AI or network · `6` external tool · `130` cancelled.
 
-**Flags.** Global flags (`--json`, `--quiet`, `--vault`, `--no-color`, `--no-ai`) are
+**Flags.** Global flags (`--json`, `--quiet`, `--vault`, `--no-color`, `--no-ai`,
+`--dry-run`) are
 hoisted out of argv before commander sees them, so they work in any position. Add a
 new global in `hoistGlobals()` *and* declare it on the program for `--help`. Shared
 filter flags come from `filterFlags()` — one definition, used by every list command.
+
+**`--dry-run` is two seams, not a flag every command checks.** Every write goes
+through the `Storage` port (I8) and every external program through `runChild`
+(I13), so `cli/src/dryrun.ts` wraps one and guards the other and that is the
+whole of it — there is no list of side effects to keep in sync, which is the
+usual reason a dry run rots. Only the commands that write *outside* Storage
+handle it themselves: `init`, `config set`, `hooks add/rm`, `schedule add/rm`,
+each printing the artifact it would have written. Anything that downloads or
+installs calls `refuseDryRun()` instead, because there is no honest preview of
+an install — `ppr doctor` is the dry run for `ppr setup`.
+
+Three things it must never fake, or the preview is worth nothing: **the model
+still runs** (a preview of `ppr dump` assembled from a fake answer is fiction,
+and the distiller's output is the entire question), **`$EDITOR` still opens**
+(composing is not an effect; saving is), and **an error is still an error** with
+its exit code. The plan is dim on stderr *after* the command's own output, so
+`--dry-run --json` prints exactly the JSON a real run would (I10) — which on a
+write command is the entry that would have been created, and is the natural
+preview.
 
 **Output.** Data on stdout, chrome on stderr (I10). Every command that produces
 entries supports `--json` and `-q`. Colour goes through the helpers in `render.ts`,
@@ -519,8 +549,10 @@ already does it. In order of how little they cost:
 1. **A new command:** an executable called `ppr-<name>` on PATH. It reads the
    vault with `ppr … --json` or `ppr context`, and is handed `PPR_VAULT`,
    `PPR_JSON`, `PPR_QUIET`, `NO_COLOR`, and `PPR_NO_AI` in its environment.
-2. **A reaction to a write:** a hook. `"hooks": {"entry.created": ["my-thing"]}`
-   in `~/.config/ppr/config.json`; the event arrives as JSON on stdin.
+2. **A reaction to a write:** a hook. `ppr hooks add entry.created my-thing`,
+   which writes `~/.config/ppr/config.json` — the file you may equally well
+   edit by hand; the event arrives as JSON on stdin. `ppr plugins` shows what
+   is wired, and `--dry-run` shows what would fire without firing it.
 3. **Rebinding a flag:** put your own `ppr-notify` or `ppr-reminders-push`
    earlier on PATH.
 4. **Settings:** `ppr config get plugins.<you>.<key>`, or read the JSON.
@@ -551,7 +583,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 287 tests, plugins included. No network. No TTY required.
+pnpm test        # 297 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -588,8 +620,9 @@ pnpm build
 - `cli/test/porcelain.test.js` — what survives a notification, and whether a
   reminder is allowed out of the vault.
 - `plugins/test/applescript.test.js` — the AppleScript a plugin would run, on a
-  hostile string and a date, plus which events `ppr-reminders-push` is about.
-  Builders only; nothing here runs osascript.
+  hostile string and a date, plus which events `ppr-reminders-push` is about and
+  the `file://` note it writes (a vault path with a space in it is the hostile
+  case). Builders only; nothing here runs osascript.
 - `cli/test/followups.test.js` — when a capture is allowed to ask a question.
 - `cli/test/suggest.test.js` — did-you-mean, and what it refuses to guess.
 - `cli/test/cli.test.js` — the real binary, spawned against a temp vault.

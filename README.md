@@ -177,6 +177,10 @@ installed alongside ppr, both about forty lines, and both replaceable. Put your
 own `ppr-reminders-push` earlier on `PATH` and `--push` means Todoist, with
 nothing to configure and no ppr release involved.
 
+A pushed reminder's note carries a `file://` link to the markdown itself, so
+tapping it in Reminders opens the entry. The file is the link; there is no
+`ppr://` scheme to install.
+
 Both are **one-way and fire-and-forget**. Nothing is read back, nothing syncs,
 and completing the copy over there does not reach in here — the markdown stays
 the only source of truth. The vault write happens first and always survives: if
@@ -524,6 +528,11 @@ ppr config set transcribe.device 1   # or name it yourself
 `--no-ai` skips model *generation*, not transcription — `ppr --no-ai voice` still
 records and transcribes, it just stores your words as they came out.
 
+`--dry-run` goes on any command. It does everything except write: the model
+still runs, `$EDITOR` still opens, an error is still an error — and then a plan
+on stderr says what would have been written and which of your hooks would have
+been told about it.
+
 ## Config
 
 Two layers: `~/.config/ppr/config.json` for everything, `<vault>/.ppr/config.json`
@@ -585,6 +594,15 @@ ppr brief --plain | ppr-notify     # a read composes; no event needed
 **A hook** runs your command when ppr writes something. The event arrives as
 JSON on stdin, with `PPR_EVENT` and `PPR_VAULT` in the environment:
 
+```bash
+ppr hooks add entry.created ppr-reminders-push
+ppr hooks add learn.finished "jq '.learned | length' | logger -t ppr"
+ppr hooks                          # what is wired to what
+```
+
+That writes the file you can equally well edit by hand — there is nothing else
+to it, and nothing gets registered anywhere:
+
 ```jsonc
 // ~/.config/ppr/config.json — and only here, never <vault>/.ppr/config.json,
 // because a vault is a repo people clone and hooks run shell commands.
@@ -604,10 +622,25 @@ JSON on stdin, with `PPR_EVENT` and `PPR_VAULT` in the environment:
 ppr recap --since 1d --style standup | pbcopy
 ```
 
+**`ppr plugins`** shows the whole wiring diagram: which commands are listening
+to which events, what `--push` and `--notify` currently resolve to on your
+`PATH`, every `ppr-*` you have installed, and which `plugins.<name>` settings
+are set. Nothing is stored — it is computed from your machine each time, so it
+cannot drift from the truth.
+
+**`--dry-run`** is how you check a wiring change without triggering it:
+
+```bash
+ppr --dry-run "shipped it"                # the entry, and the hook it would fire
+ppr config set ai.model llama3 --dry-run  # the delta, not the file
+ppr schedule add brief --at 08:00 --dry-run
+```
+
 Events: `entry.created`, `entry.updated`, `entry.removed`, `entry.completed`,
 `fact.learned`, `fact.refined`, `conflict.found`, `learn.finished`. Coarse on
 purpose — a reminder is `entry.created` plus a check on `kind`, and the payload
-carries the whole entry so you never have to ask a second question. Your
+carries the whole entry so you never have to ask a second question — including
+`vault` and `path`, so a consumer can link straight to the markdown file. Your
 settings live under `plugins.<you>.<key>`; read them with `ppr config get`.
 
 `plugins/README.md` has the long version, with the two programs ppr ships as

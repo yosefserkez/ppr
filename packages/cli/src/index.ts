@@ -189,7 +189,6 @@ Examples:
   ppr "deploy failed again, rolled back to 4.2"   quick log (quoted = a note)
   ppr remind tomorrow call the dentist            something to be reminded of
   cat notes.txt | ppr dump                        clean up a wall of text
-  ppr clip https://example.com/post               save what a page says
   ppr ls                                          browse with the keyboard
   ppr search deploy --since 30d                   find it later
   ppr ask "why did we drop redis?"                answer from your own entries
@@ -197,6 +196,7 @@ Examples:
   ppr memory learn                                keep what your entries say is true
   ppr brief                                       what is coming up
   ppr context redis | claude -p "what now?"       hand another tool what ppr knows
+  ppr plugins                                     what is wired to ppr, and where
   vim $(ppr path latest)                          it is just markdown
 `,
 );

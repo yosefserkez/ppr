@@ -164,6 +164,7 @@ echo "  ppr \"first note\"    write something"
 echo "  ppr --help          everything else"
 if [ "$PLUGINS" = 1 ]; then
   echo "  ppr brief --notify  uses ppr-notify, installed alongside (see plugins/)"
+  echo "  ppr plugins         what is now wired to ppr, and where"
 fi
 echo
 echo "Edit the source and just run ppr — it rebuilds itself."

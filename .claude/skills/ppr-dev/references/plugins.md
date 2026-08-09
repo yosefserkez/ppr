@@ -20,7 +20,9 @@ Adding to ppr is the last resort, not the first.
 | You want | Use |
 | --- | --- |
 | A new subcommand | `ppr-<name>` on PATH. Nothing to register. |
-| To react to a write | A hook on an event. |
+| To react to a write | A hook on an event: `ppr hooks add <event> <command>`. |
+| To see what is currently wired | `ppr plugins` — hooks, intents, `ppr-*`, settings. |
+| To check what something would do | `--dry-run` on any command. |
 | To rebind `--notify` / `--push` | Your own `ppr-notify` / `ppr-reminders-push` earlier on PATH. |
 | Somewhere to keep settings | `plugins.<name>.<key>` in config. |
 | A field on an entry ppr must not eat | `Entry.extra` — round-trips (I3). |
@@ -83,6 +85,13 @@ Enforced structurally, not by a check:
 If you touch config merging, keep all four. The test is
 "a hook declared by a vault is never run, however the vault got there".
 
+`ppr hooks add/rm/ls` is a **pen over that file**, not a second mechanism: it
+writes the same block in the same user layer, validates the event name against
+`EVENT_NAMES`, warns (never errors) when the command is not on PATH yet, and
+`saveHooks` is the only function in ppr that writes a hook. Hand-editing stays
+exactly as supported. Never route registration through `config set` — that path
+allows `--local`, and `--local` is the vault.
+
 ## Running somebody else's program
 
 `cli/src/child.ts` is the **one** way, and both hooks and the plugin-backed
@@ -117,6 +126,24 @@ same `runChild`. `cli/src/porcelain.ts` holds the decisions
 
 `pushDecision` asks "is there a program on PATH that does this", not "is this a
 Mac". Keep it that way — that is the whole point.
+
+`ppr plugins` is where a user sees what all of this currently resolves to. It
+stores nothing and scans PATH through the same `findOnPath` the dispatcher uses,
+so it cannot disagree with what actually runs. If you add a resolution rule, add
+it there too — one definition.
+
+## An upstream that names an entry links to it
+
+A copy of a note in somebody else's app is a dead end unless it says where it
+came from, and "type `ppr show 6jc6ad`" is not a link. Every payload carries
+`vault` (absolute) and `entry.path` (vault-relative) exactly so a consumer can
+build a `file://` URL without calling back in — a piped or replayed event stands
+alone. Encode **per path segment**: `~/My Notes` is an ordinary vault, and
+`encodeURI` leaves a `#` in a filename to truncate the link at a fragment.
+
+No `ppr://` scheme. It needs an app bundle and an installer to reach a file that
+already has a URL. `plugins/ppr-reminders-push`'s `fileUrl`/`reminderNote` are
+the worked example, pure and tested.
 
 ## Where things go
 
