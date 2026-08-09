@@ -17,9 +17,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
+import { accessSync, constants, readdirSync, statSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { findVault } from '@ppr/core/node';
 import type { GlobalOptions } from './context.js';
 
@@ -31,21 +31,85 @@ const signals: Record<string, number> = osConstants.signals;
 /** What an external subcommand is called on disk. */
 export const externalName = (word: string): string => `ppr-${word}`;
 
+/** A file we are allowed to run. The one predicate — see `scanExternals`. */
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false; // not here, or not ours to run
+  }
+}
+
 /** The first executable of that name on PATH, or null. */
 export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
   if (!COMMAND_WORD.test(name.replace(/^ppr-/, ''))) return null;
-  for (const dir of (env.PATH ?? '').split(delimiter)) {
-    if (!dir) continue;
+  for (const dir of pathDirs(env)) {
     const candidate = join(dir, name);
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      /* not here, or not ours to run */
-    }
+    if (isExecutableFile(candidate)) return candidate;
   }
   return null;
+}
+
+const pathDirs = (env: NodeJS.ProcessEnv): string[] =>
+  (env.PATH ?? '').split(delimiter).filter(Boolean);
+
+/**
+ * Where a command someone typed would actually come from.
+ *
+ * `findOnPath` answers for a bare name; a hook or a `--pipe` is a command line
+ * the user wrote, and people write `/usr/local/bin/thing` and `./notify` as
+ * readily as `ppr-notify`. Anything with a slash is a path and is checked as
+ * one, because looking it up on PATH would answer "no" about a program that is
+ * plainly there.
+ */
+export function resolveCommand(word: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!word) return null;
+  if (word.includes('/')) {
+    const path = resolve(word);
+    return isExecutableFile(path) ? path : null;
+  }
+  return findOnPath(word, env);
+}
+
+/** A `ppr-foo` on PATH: the word that runs it, and where it came from. */
+export interface ExternalCommand {
+  /** What you type: `ppr <word>`. */
+  word: string;
+  /** What it is called on disk. */
+  name: string;
+  path: string;
+}
+
+/**
+ * Every `ppr-*` on PATH, as `ppr plugins` reports them.
+ *
+ * Deduped by name with the first directory winning, because that is what the
+ * shell does and what `findOnPath` above does — a listing that disagreed with
+ * the dispatcher about which copy runs would be worse than no listing. A
+ * built-in still wins over all of them, which `externalFor` decides and this
+ * does not: the point here is to show what is installed, and something shadowed
+ * by a built-in is exactly the thing worth seeing.
+ */
+export function scanExternals(env: NodeJS.ProcessEnv = process.env): ExternalCommand[] {
+  const found = new Map<string, ExternalCommand>();
+  for (const dir of pathDirs(env)) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue; // a PATH entry that is not a directory is not an error
+    }
+    for (const name of names) {
+      if (!name.startsWith('ppr-') || found.has(name)) continue;
+      const word = name.slice('ppr-'.length);
+      if (!COMMAND_WORD.test(word)) continue;
+      const path = join(dir, name);
+      if (isExecutableFile(path)) found.set(name, { word, name, path });
+    }
+  }
+  return [...found.values()].sort((a, b) => a.word.localeCompare(b.word));
 }
 
 /** The binary `ppr <word>` should hand over to, if there is one. */

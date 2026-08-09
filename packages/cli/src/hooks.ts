@@ -30,8 +30,8 @@
  * allowed to be a shell string — the same trust as a line in their profile.
  */
 
-import { eventJson, isEventName, type VaultEvent } from '@ppr/core';
-import { globalConfigPath, readConfigLayer } from '@ppr/core/node';
+import { eventJson, isEventName, type VaultEvent, type VaultEventName } from '@ppr/core';
+import { globalConfigPath, readConfigLayer, writeConfigLayer } from '@ppr/core/node';
 import { runChild } from './child.js';
 import { color, errline } from './render.js';
 
@@ -61,6 +61,57 @@ export function parseHooks(raw: unknown): Hooks {
 /** The hook table, from the user layer alone. See the security rule above. */
 export async function loadHooks(env: NodeJS.ProcessEnv = process.env): Promise<Hooks> {
   return parseHooks((await readConfigLayer(globalConfigPath(env))).hooks);
+}
+
+/**
+ * The registration half, in the same file as the runner on purpose.
+ *
+ * `ppr hooks add` is a pen over a file you may still edit by hand — the Rails
+ * rule: a friendly command writes the visible config, it never becomes a second
+ * place a hook can live. It writes the layer the runner above reads and no
+ * other, so "registered" and "runs" cannot come apart, and `config set hooks.…`
+ * stays refused because that path would let `--local` put one in a vault.
+ */
+export function withHook(hooks: Hooks, event: VaultEventName, command: string): Hooks | null {
+  const current = hooks[event] ?? [];
+  // Registering twice is a no-op rather than a second spawn: a hook is wiring,
+  // and wiring is either there or not.
+  if (current.includes(command)) return null;
+  return { ...hooks, [event]: [...current, command] };
+}
+
+/** Drops one command, or the whole event. The last one takes the key with it. */
+export function withoutHook(
+  hooks: Hooks,
+  event: VaultEventName,
+  command?: string,
+): { hooks: Hooks; removed: string[] } {
+  const current = hooks[event] ?? [];
+  const removed = command ? current.filter((c) => c === command) : current;
+  const left = command ? current.filter((c) => c !== command) : [];
+
+  const next = { ...hooks };
+  // An empty list is not "no hooks", it is a leftover — and a config file full
+  // of empty arrays is a file nobody can read at a glance.
+  if (left.length) next[event] = left;
+  else delete next[event];
+  return { hooks: next, removed };
+}
+
+/**
+ * Persists the table, leaving every other key in the file alone.
+ *
+ * Read-modify-write of the user layer, so somebody's `display.listLimit` is
+ * still there afterwards. Returns the file, because naming it is how a person
+ * finds out where their hooks actually live.
+ */
+export async function saveHooks(hooks: Hooks, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const file = globalConfigPath(env);
+  const layer = await readConfigLayer(file);
+  if (Object.keys(hooks).length) layer.hooks = hooks;
+  else delete layer.hooks;
+  await writeConfigLayer(file, layer);
+  return file;
 }
 
 /**

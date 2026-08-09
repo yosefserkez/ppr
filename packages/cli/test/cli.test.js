@@ -345,6 +345,52 @@ test('a hook that fails costs one line, not the exit code and not stdout', async
   });
 });
 
+test('`ppr hooks add` wires a command that then actually fires', async () => {
+  await withVault(async (dir) => {
+    const marker = join(dir, 'fired');
+    await writeScript(dir, 'ppr-marker', `touch "${marker}"`);
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+
+    assert.equal((await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-marker'], { env })).code, 0);
+
+    // A pen over visible config, not a second mechanism: what it writes is the
+    // same block, in the same user-layer file, people were told to edit.
+    const layer = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.deepEqual(layer.hooks, { 'entry.created': ['ppr-marker'] });
+
+    await ppr(dir, ['+', 'a note'], { env });
+    assert.equal(existsSync(marker), true, 'the runner reads the layer `hooks add` wrote');
+
+    // Wiring is either there or not, so asking twice changes nothing.
+    const again = await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-marker'], { env });
+    assert.match(again.stderr, /already wired/i);
+    const listed = JSON.parse((await ppr(dir, ['hooks', 'ls', '--json'], { env })).stdout);
+    assert.deepEqual(listed.hooks['entry.created'], ['ppr-marker']);
+
+    await rm(marker);
+    assert.equal((await ppr(dir, ['hooks', 'rm', 'entry.created'], { env })).code, 0);
+    await ppr(dir, ['+', 'another note'], { env });
+    assert.equal(existsSync(marker), false, 'and unwiring it stops it');
+
+    // The last command out takes the key with it, rather than leaving [].
+    const after = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.equal(after.hooks, undefined);
+  });
+});
+
+test('a hook on an event that does not exist is refused, not written', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['hooks', 'add', 'entry.create', 'echo hi']);
+    assert.equal(code, 2);
+    // The runner ignores a name it does not know, which is right for a file
+    // edited by hand and useless as an answer to a typo — so the pen names
+    // every event there is.
+    assert.match(stderr, /entry\.created/);
+    assert.match(stderr, /learn\.finished/);
+    assert.equal(existsSync(join(dir, '.xdg', 'ppr', 'config.json')), false, 'and nothing was written');
+  });
+});
+
 test('an unknown word runs `ppr-<word>` from PATH, the way git does', async () => {
   await withVault(async (dir) => {
     await writeScript(
