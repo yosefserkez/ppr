@@ -27,6 +27,17 @@ type Fetcher = (url, opts?) => Promise<{ status; contentType; body; url }>
 `Storage` is the only one that is required. Everything else is optional, and every
 feature has a defined behaviour when it is absent.
 
+One channel runs the other way. `VaultOptions.onEvent` is how a write says so —
+`entry.created`, `entry.updated`, `entry.removed`, `entry.completed`,
+`fact.learned`, `fact.refined`, `conflict.found`, `learn.finished`, each
+carrying complete, versioned, plain-JSON data (`eventJson`). Core has no idea
+what listening means: the CLI spawns hooks with it, a mobile app would redraw a
+list. Reads emit nothing — a read already composes with a pipe.
+
+```ts
+const vault = await Vault.open({ ...ports, onEvent: (e) => console.log(e.event) });
+```
+
 ## Two entry points
 
 ```ts

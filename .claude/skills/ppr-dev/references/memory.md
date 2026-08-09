@@ -52,32 +52,40 @@ Adding a reminder field is the same four edits as a fact's, against
 `reminderExtra()` / `REMINDER_KEYS` / `toDated()` / the `--json` shape in
 `commands/think.ts`.
 
-## Handing a reminder to the OS
+## Handing a reminder to something else
 
-`remind.push` (and `--push` / `--no-push`) copies a dated reminder into
-Reminders.app; `ppr brief --notify` posts a banner. Both cross a line that does
-not move: **ppr hands things to the OS and never becomes one of its apps.**
-One-way, fire-and-forget — no sync, no Calendar, nothing read back. A tickbox
-moved in Reminders.app does not reach the vault, because two owners of one row
-is the end of I1.
+`remind.push` (and `--push` / `--no-push`) hands a dated reminder to
+`ppr-reminders-push`; `ppr brief --notify` hands the brief to `ppr-notify`.
+Both are conventional program names resolved on PATH, never code inside ppr:
+the flag names the intent, the name on PATH resolves the tool, and replacing
+the executable rebinds the intent (I13, and `references/plugins.md`).
 
-The vault write happens first and always survives. A bridge failure costs a
-stderr line, never the entry (I2's shape), which is why the executors in
-`core/src/node/macos.ts` return `{ok, hint?}` instead of throwing.
+One-way, fire-and-forget — no sync, nothing read back. A tickbox moved in
+whatever received the copy does not reach the vault, because two owners of one
+row is the end of I1.
 
-`pushDecision()` in `cli/src/bridge.ts` is the only thing that decides, so
+The vault write happens first and always survives. A plugin that is missing,
+slow, or broken costs a stderr line, never the entry (I2's shape), which is why
+`runChild` reports `{ok, hint?}` instead of throwing.
+
+`pushDecision()` in `cli/src/porcelain.ts` is the only thing that decides, so
 `ppr remind` and `ppr "remind me …"` cannot disagree — both reach it through
 the one `remind()` in `commands/capture.ts` (L18). Order is flag, then day,
-then platform: a dateless line became an ordinary log and has nothing to ring
-about, so `--push` cannot conjure a reminder out of it.
+then whether the tool exists: a dateless line became an ordinary log and has
+nothing to ring about, so `--push` cannot conjure a reminder out of it.
 
-Script building and the decision are pure and unit-tested. **No test runs
-osascript** — a suite that creates reminders leaves litter in someone's list.
+What goes down the pipe is the `entry.created` event, in exactly the shape a
+hook on `entry.created` receives — one serializer, two doors. That is also why
+`entryJson` publishes `extra`: a consumer told a reminder was created has to be
+able to see the day it carries without reading the file back.
+
+The decisions are pure and unit-tested. **No test runs osascript** — a suite
+that creates reminders leaves litter in someone's list.
 
 | If it is... | It goes in... |
 | --- | --- |
-| The AppleScript, its escaping, an osascript error hint | `core/src/node/macos.ts` |
-| Whether to push, and what a notification says | `cli/src/bridge.ts` |
+| The AppleScript, its escaping, an osascript error hint | `plugins/` — not ppr |
+| Whether to push, and what a notification says | `cli/src/porcelain.ts` |
 
 ## The rules that are not negotiable
 
@@ -128,9 +136,10 @@ Four edits, in this order:
 2. `FACT_KEYS` lists it, so `factPatch()` can *clear* it — without that, a
    settled conflict keeps pointing at the fact it settled.
 3. `toFact()` reads it back, and decides what absence means.
-4. `factJson()` in `commands/think.ts` exposes it. `entryJson` carries owned
-   frontmatter only, so anything in `extra` is invisible to scripts until this
-   line exists.
+4. `factJson()` in `commands/think.ts` names it. `entryJson` already publishes
+   the whole of `extra`, so it is visible to a script and to an event consumer
+   from the moment it is written — this step is about giving it a place in the
+   flat shape people read `ppr memory ls --json` with.
 
 ## Changing a prompt
 

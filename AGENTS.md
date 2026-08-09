@@ -144,6 +144,37 @@ because every browsing command depends on it. *Enforced by:* `MEMORY_KIND` in
 recaps, and search until asked for by kind", and "export hands over the facts
 too, unless you asked for a kind".
 
+**I13. Everything outside the vault is a third-party tool — the operating
+system included.**
+ppr must be buildable-upon without ppr knowing the builder exists. Its whole
+outward surface is three things: **events out** (push), **`--json` answers**
+(pull), and **markdown files** (truth). Nothing else is API.
+
+The corollary that decides where a feature goes: **writes emit events; reads
+compose with pipes.** A read needs no event, because `ppr brief --plain |
+ppr-notify` already works; a write does, because nobody was standing there.
+
+ppr may still ship the batteries. `--notify` and `--push` are real flags with
+real defaults — but a flag names an *intent*, and a conventional program name
+on PATH resolves the *tool*: `--notify` runs whatever `ppr-notify` is,
+`--push` runs whatever `ppr-reminders-push` is. Replace the executable and you
+have rebound the intent, with no ppr release and no config schema. That is the
+same trick as `$EDITOR`, `$PAGER`, and `git foo` → `git-foo`, and it is why
+there is no plugin API to version.
+
+Everything across that line is one-way and fire-and-forget. The vault write
+happens first and always survives; a consumer that is missing, slow, or broken
+costs one line on stderr and never an entry or an exit code (I2's shape).
+Nothing over there may write back here, because two owners of one row is the
+end of I1.
+*Enforced by:* `core/src/events.ts` and `VaultOptions.onEvent` (core emits, the
+host listens — I8 intact); `cli/src/hooks.ts`, `cli/src/child.ts`,
+`cli/src/external.ts`, `cli/src/porcelain.ts`; the fact that `plugins/` imports
+nothing from ppr and ppr imports nothing from `plugins/`. Tests: "every write
+says so, and says enough that nobody has to ask", "reads are silent, because a
+read already composes with a pipe", "--push hands the entry to whatever
+`ppr-reminders-push` is", "an unknown word runs `ppr-<word>` from PATH".
+
 ---
 
 ## 4. Architecture
@@ -165,6 +196,11 @@ AIProvider   id, model, local, generate(req)
 Transcriber  id, local, transcribe(audio)
 Fetcher      (url) => { status, contentType, body, url }
 ```
+
+Plus one channel in the other direction: `VaultOptions.onEvent`, which is how a
+write says so (I13). It is a port in every way that matters — core hands over
+plain data and has no idea what listening means. The CLI spawns hooks with it;
+a mobile app would redraw a list.
 
 Only `Storage` is required. A mobile, desktop, or web client implements those and
 reuses every behaviour verbatim — that is the whole point, and it is why I8 is
@@ -234,38 +270,67 @@ of the pair is `known`.
 and what it does with them is hand another tool a grounded snapshot. It runs no
 model, so it is instant and identical every time.
 
-### The bridge to the OS
+### Extending ppr
 
-```
-core/src/node/macos.ts   how: AppleScript, escaping, error hints. Pure builders.
-cli/src/bridge.ts        when: what survives a banner, whether a push happens.
-```
+ppr's outward surface is events out, `--json` in, markdown underneath (I13).
+Everything below is one of those three wearing a convenient hat. **Pick the
+narrowest seam that does the job** — a change to ppr itself is the last resort,
+not the first.
 
-**The line: ppr may hand things to the operating system; it never becomes one
-of its apps.** Delivery is delegated exactly like editing is delegated to
-`$EDITOR` and scheduling to `launchd` — macOS already reaches your watch and
-ppr is not going to grow a second version of that. `ppr brief --notify` posts
-a banner; `remind.push` / `--push` creates a reminder in the default list.
+| Seam | Use it when | Where |
+| --- | --- | --- |
+| **Ports** | A whole host: mobile, web, a daemon. Storage, Clock, AIProvider, Transcriber, Fetcher | `core/src/ports.ts` |
+| **`registerProvider`** | A new model backend that needs a shell | `core/src/ai/providers.ts` |
+| **Open kinds** | A new sort of entry. `kind` is any string; ppr ships seven | `core/src/types.ts` |
+| **`Entry.extra`** | A field on an entry that ppr must not eat. Round-trips verbatim (I3) | `entry.ts` `OWNED` |
+| **`--json`** (pull) | Your program asks ppr a question and acts on the answer | every command |
+| **Events** (push) | Your program reacts to a write it did not make | `core/src/events.ts` |
+| **Hooks** | Wiring an event to a command, per user | `~/.config/ppr/config.json` |
+| **`ppr-foo` on PATH** | A new *subcommand*, in any language | `cli/src/external.ts` |
+| **Conventional names** | Rebinding what `--notify` / `--push` mean | `cli/src/porcelain.ts` |
+| **`plugins.<name>.*`** | Settings for a tool ppr has never heard of | `core/src/config.ts` |
 
-Everything across it is **one-way and fire-and-forget**. No Calendar events, no
-sync, no reading back from Reminders.app, no daemon, no list-picking config.
-Nothing over there may write anything back here, because the moment two systems
-own the same row the markdown has stopped being the source of truth (I1).
+**Events.** Eight names, coarse and permanent: `entry.created`,
+`entry.updated`, `entry.removed`, `entry.completed`, `fact.learned`,
+`fact.refined`, `conflict.found`, `learn.finished`. There is deliberately no
+`reminder.created` — that is `entry.created` plus one line of filtering on
+`kind`, which is why every payload carries the whole entry, both sides of a
+change, and a `v`. A consumer that has to call back into ppr is a consumer
+racing the next write. `entry.*` and the semantic events are both emitted: a
+learned fact is `entry.created` (a file appeared) *and* `fact.learned` (a model
+decided it was durable), and those are different subscriptions.
 
-The vault write always happens first and always survives. A bridge failure —
-osascript refusing, Automation permission denied, not being on a Mac — costs a
-notification and one line on stderr, never an entry and never an exit code
-(I2's shape). That is why the executors return `{ok, hint?}` rather than
-throwing.
+**Hooks come from the user layer only — this is a security rule, not a
+preference.** `hooks` is read from `~/.config/ppr/config.json` and never from
+`<vault>/.ppr/config.json`. Config merges three layers and the vault layer
+wins, which is right for `display.listLimit` and catastrophic for a list of
+shell commands: a vault is a git repo we tell people to clone and share, so
+honouring a vault-declared hook means `git clone && ppr ls` executes a
+stranger's shell. Git learned this and answered the same way — hooks live in
+`.git/hooks` and do not clone. It is enforced structurally: `hooks` is not a
+field on `Config`, `validateConfig` deletes any that a merge produced, and the
+only reader is `readConfigLayer(globalConfigPath())` in `cli/src/hooks.ts`.
+`ppr config set hooks.…` refuses and names the file.
 
-The split is `schedule.ts`'s: **pure generators, thin executors.** Script text,
-escaping, truncation, and the push decision are all pure functions with unit
-tests; the three-line functions around them are the only thing that shells out.
-**No test may run osascript** — a suite that posts banners or creates reminders
-leaves litter in a real person's Reminders list. The non-darwin and switched-off
-paths are the only ones integration-tested.
+**One way to run somebody else's program.** `cli/src/child.ts`: stdout
+discarded so a consumer cannot get inside `ppr ls --json` (I10), failures
+reported as one stderr line and never an exit code, spawned immediately, and
+waited on for two seconds at the end of the command before ppr stops waiting
+and lets the child finish on its own. Hooks and the plugin-backed flags both go
+through it, so there is exactly one answer to "what happens when it is missing,
+slow, or broken".
 
-Two traps are already paid for and commented in place: AppleScript string
+**The plugins are not part of ppr.** `plugins/ppr-notify` and
+`plugins/ppr-reminders-push` are ordinary programs that ppr ships and
+`install.sh` puts on PATH; nothing in `packages/` imports them and nothing in
+them imports ppr. They are the single copy of the AppleScript — core keeps
+none, because two copies of escaping and date assembly drift, and this is the
+code where drift files somebody's reminder in the wrong month. The split
+inside them is `schedule.ts`'s: pure builders in `applescript.js`, three lines
+that shell out in `osascript.js`. **No test may run osascript** — a suite that
+posts banners or creates reminders leaves litter in a real person's list.
+
+Two traps are paid for and commented in place there: AppleScript string
 literals cannot span lines and take exactly five escapes, and an AppleScript
 *date literal* is parsed in the user's locale — so a pushed date is assembled
 from components, with `set day of d to 1` first so assigning a month never
@@ -280,8 +345,11 @@ rolls the date into the next one.
 | Anything dated: the shared shape, occurrences, overdue | `core/src/memory.ts` |
 | Reminders: their frontmatter, and reading a date out of words | `core/src/remind.ts` |
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
-| Handing something to macOS: the AppleScript and its escaping | `core/src/node/macos.ts` |
-| Whether and what ppr hands over | `cli/src/bridge.ts` |
+| What ppr announces when it writes something | `core/src/events.ts` |
+| Running somebody else's program, at all | `cli/src/child.ts` — nowhere else |
+| Wiring an event to a configured command | `cli/src/hooks.ts` |
+| What `--notify` / `--push` resolve to, and when | `cli/src/porcelain.ts` |
+| Talking to macOS: AppleScript, its escaping, a hint | `plugins/` — not ppr |
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
 | A decision about "what can I see next" | `core/src/navigate.ts` (it is a graph question) |
@@ -356,6 +424,12 @@ this has been read", so only a run that actually read the backlog may move it
 < `<vault>/.ppr/config.json`. Writes persist only the delta. Optional keys with no
 default must be listed in `OPTIONAL_KEYS` or `config set` will reject them (L5).
 
+Two namespaces break that pattern deliberately. `plugins.<name>.<key>` accepts
+anything, because an unknown key there is the point rather than a typo — and
+secrets are still refused, harder than elsewhere, since plugin settings merge
+through the vault layer and a vault is assumed to be in git (I7). And `hooks`
+is not config at all: see the security rule under *Extending ppr*.
+
 ---
 
 ## 6. Conventions
@@ -418,6 +492,35 @@ casts. `exactOptionalPropertyTypes` is off, but conditional spreads
    existed before (I4).
 3. Unit-test the reducer. Then verify the real thing through a PTY (section 8).
 
+### Build something on ppr
+
+Before adding anything to ppr, check whether one of the seams in section 4
+already does it. In order of how little they cost:
+
+1. **A new command:** an executable called `ppr-<name>` on PATH. It reads the
+   vault with `ppr … --json` or `ppr context`, and is handed `PPR_VAULT`,
+   `PPR_JSON`, `PPR_QUIET`, `NO_COLOR`, and `PPR_NO_AI` in its environment.
+2. **A reaction to a write:** a hook. `"hooks": {"entry.created": ["my-thing"]}`
+   in `~/.config/ppr/config.json`; the event arrives as JSON on stdin.
+3. **Rebinding a flag:** put your own `ppr-notify` or `ppr-reminders-push`
+   earlier on PATH.
+4. **Settings:** `ppr config get plugins.<you>.<key>`, or read the JSON.
+
+A consumer prints nothing on stdout, exits 0 when the event was not its
+business or when it cannot work at all, is quick or detaches, and never writes
+back into the vault. `plugins/README.md` is the long version, with the two
+reference consumers as worked examples.
+
+### Add an event
+
+Do not, unless the change is a genuinely new *act*. The names are API forever
+and a kind filter answers most of what a new one would. If it really is one:
+add it to `EVENT_NAMES` and the union in `core/src/events.ts`, emit it at the
+true state change in `vault.ts` (through `this.emit`, never by calling the
+listener), give the payload everything a consumer could want so it never calls
+back in, and add a case to `core/test/events.test.js`. A payload whose meaning
+changes bumps `v`; a payload that only gains a field does not.
+
 ### Change the entry format
 
 Think twice. Files already on disk must keep parsing. `parseEntry` is deliberately
@@ -429,7 +532,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 240 tests. No network. No TTY required.
+pnpm test        # 286 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -457,11 +560,17 @@ pnpm build
 - `cli/test/select.test.js` — the inline picker's reducer and the frame it
   renders, including typed answers for a machine with no terminal.
 - `cli/test/schedule.test.js` — the launchd plist and crontab line, including
-  the absolute paths a scheduler needs (L22).
-- `core/test/macos.test.js` — the AppleScript a bridge call would run, on a
-  hostile string and a date. Builders only; nothing here runs osascript.
-- `cli/test/bridge.test.js` — what survives a notification, and whether a
+  the absolute paths a scheduler needs (L22), and how a `--pipe` becomes a real
+  pipe in one and a `/bin/sh -c` in the other.
+- `core/test/events.test.js` — which acts speak, what they carry, and that a
+  listener with a bug in it cannot cost the user an entry.
+- `cli/test/hooks.test.js` — what a `hooks` block means. Whether a *vault* may
+  declare one is an integration test, because it is a claim about a whole run.
+- `cli/test/porcelain.test.js` — what survives a notification, and whether a
   reminder is allowed out of the vault.
+- `plugins/test/applescript.test.js` — the AppleScript a plugin would run, on a
+  hostile string and a date, plus which events `ppr-reminders-push` is about.
+  Builders only; nothing here runs osascript.
 - `cli/test/followups.test.js` — when a capture is allowed to ask a question.
 - `cli/test/suggest.test.js` — did-you-mean, and what it refuses to guess.
 - `cli/test/cli.test.js` — the real binary, spawned against a temp vault.
@@ -705,9 +814,14 @@ actually run the command you changed. Report what you verified and what you did 
 ## 11. What not to do
 
 - Do not add a database, an index server, or a sync daemon. Git is the sync story.
-- Do not widen the macOS bridge into two-way anything: no Calendar events, no
-  reading back from Reminders.app, no reconciling a tickbox somebody moved over
-  there. ppr hands things over and forgets them (section 4).
+- Do not teach ppr what a notification, a reminders app, or an operating system
+  is. It hands things to a program named by convention and forgets them (I13).
+  Anything two-way is worse: no reading back, no reconciling a tickbox somebody
+  moved over there.
+- Do not add a plugin registry, a manifest, a lifecycle, or a versioned plugin
+  API. A name on PATH and JSON on a pipe is the whole contract, and it is the
+  reason there is nothing to keep compatible.
+- Do not multiply event names. A new kind is a filter, not an event.
 - Do not add embeddings or a vector store to search. Lexical search needs no setup,
   works offline, and is instant on a personal vault. `ppr ask` is where semantics live.
 - Do not make AI required for any command that has a sensible offline behaviour.

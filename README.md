@@ -51,6 +51,8 @@ Requires Node 20.11+ and pnpm.
 The installer builds the project and puts a small `ppr` wrapper on your `PATH`
 (it picks `$PNPM_HOME`, `~/.local/bin`, or `/usr/local/bin` — whichever is
 already there). The wrapper runs the code in this repo rather than a copy of it.
+The two programs in `plugins/` go on `PATH` beside it, because `--notify` and
+`--push` look them up by name.
 
 **Updating is just editing.** Change the source, run `ppr`, and it rebuilds
 itself first — no reinstall, nothing to remember after a `git pull`. A clean run
@@ -64,6 +66,7 @@ build anyway. A half-finished refactor should never stop you writing a note.
 pnpm dev                          # watch mode: rebuilds on save, no pause on first run
 PPR_NO_AUTOBUILD=1 ppr ls         # skip the freshness check for this run
 ./scripts/install.sh --dir ~/bin  # install somewhere specific
+./scripts/install.sh --no-plugins # skip ppr-notify and ppr-reminders-push
 ./scripts/install.sh --uninstall  # remove the command
 ```
 
@@ -155,10 +158,10 @@ explicit form.
 An unfinished reminder shows up as overdue for a week after its day, then stops
 asking — a brief that never forgets is a guilt list rather than a heads-up.
 
-### Letting the OS do the ringing
+### Letting something else do the ringing
 
-**Delivery is the operating system's job.** ppr is not going to grow a daemon,
-a notification centre, or a calendar; macOS has all three and they already
+**Delivery is somebody else's job.** ppr is not going to grow a daemon, a
+notification centre, or a calendar; your machine has all three and they already
 reach your watch. So ppr hands things over the same way it hands editing to
 `$EDITOR` and scheduling to `launchd`, and then gets out of the way.
 
@@ -168,16 +171,23 @@ ppr remind tomorrow call the dentist --push
 ppr config set remind.push true   # every reminder, quoted ones included
 ```
 
-Both are **one-way and fire-and-forget**. Nothing is read back out of
-Reminders.app, nothing syncs, and completing the copy over there does not reach
-in here — the markdown stays the only source of truth. The vault write happens
-first and always survives: if the bridge fails, or you are not on a Mac, you
-get one line on stderr and the entry is exactly where it would have been.
+The flag names what you want; a program on your `PATH` decides how it happens.
+`--notify` runs `ppr-notify` and `--push` runs `ppr-reminders-push` — both
+installed alongside ppr, both about forty lines, and both replaceable. Put your
+own `ppr-reminders-push` earlier on `PATH` and `--push` means Todoist, with
+nothing to configure and no ppr release involved.
+
+Both are **one-way and fire-and-forget**. Nothing is read back, nothing syncs,
+and completing the copy over there does not reach in here — the markdown stays
+the only source of truth. The vault write happens first and always survives: if
+the plugin fails, or is not installed, or you are not on the platform it needs,
+you get one line on stderr and the entry is exactly where it would have been.
 
 `--notify` posts the soonest item and a count of the rest, because banners
 truncate hard and five things squeezed into two lines are read as none of them.
 Nothing coming up posts nothing at all — a daily "nothing coming up" ping is
-how a notification channel stops being read.
+how a notification channel stops being read. Without the flag, a pipe does the
+same job: `ppr brief --plain | ppr-notify`.
 
 ### Composing with `ppr write`
 
@@ -346,7 +356,7 @@ the sentence.
 
 ```bash
 ppr brief --json | jq '.[] | select(.overdue)'
-ppr brief --notify                            # and as a macOS notification
+ppr brief --notify                            # and as a notification
 ```
 
 ### Handing it to something else
@@ -364,8 +374,9 @@ ppr context --json | jq .facts
 ### On a timer
 
 ```bash
-ppr schedule add learn --at 03:00   # launchd or cron, whichever you have
-ppr schedule add brief --at 08:00   # arrives as a notification
+ppr schedule add learn --at 03:00                     # launchd or cron
+ppr schedule add brief --at 08:00 --notify            # arrives as a banner
+ppr schedule add brief --pipe "mail -s brief me@example.com"
 ppr schedule ls
 ```
 
@@ -373,8 +384,10 @@ ppr does not run in the background and will not start; `schedule` writes the
 config for the scheduler your machine already has, and prints the crontab line
 if it cannot install one.
 
-The scheduled `brief` runs with `--notify`, because a brief printed into a
-launchd log at 8am is a brief nobody reads.
+A scheduled `brief` with nowhere to go writes into a log nobody reads, so the
+useful half is delivery — and delivery is a pipe. `--notify` is shorthand for
+`--pipe ppr-notify`; anything else you can type on a command line works too,
+and ppr does not need to know what is on the other end of it.
 
 Only `learn` needs a model. `ppr ai test` sends one prompt end to end and says
 whether yours answers — and whether it answers in JSON, which is what every ppr
@@ -555,6 +568,51 @@ Edit them in any editor. Sync them with git, Syncthing, or a shared drive. ppr
 notices changes on the next command — the markdown is the source of truth, and the
 index is only a cache.
 
+## Build on ppr
+
+**Everything outside the vault is a third-party tool — the operating system
+included.** ppr's whole outward surface is three things: markdown files (the
+truth), `--json` answers (ask it something), and events (it tells you when
+something changed). There is no plugin API to version, no manifest, and nothing
+to register.
+
+Writes emit events; reads compose with pipes.
+
+```bash
+ppr brief --plain | ppr-notify     # a read composes; no event needed
+```
+
+**A hook** runs your command when ppr writes something. The event arrives as
+JSON on stdin, with `PPR_EVENT` and `PPR_VAULT` in the environment:
+
+```jsonc
+// ~/.config/ppr/config.json — and only here, never <vault>/.ppr/config.json,
+// because a vault is a repo people clone and hooks run shell commands.
+{
+  "hooks": {
+    "entry.created": ["ppr-reminders-push"],
+    "learn.finished": ["jq '.learned | length' | logger -t ppr"]
+  }
+}
+```
+
+**A `ppr-foo` on your `PATH`** is a subcommand, the way `git-foo` is:
+
+```sh
+#!/bin/sh
+# ~/.local/bin/ppr-standup  ->  ppr standup
+ppr recap --since 1d --style standup | pbcopy
+```
+
+Events: `entry.created`, `entry.updated`, `entry.removed`, `entry.completed`,
+`fact.learned`, `fact.refined`, `conflict.found`, `learn.finished`. Coarse on
+purpose — a reminder is `entry.created` plus a check on `kind`, and the payload
+carries the whole entry so you never have to ask a second question. Your
+settings live under `plugins.<you>.<key>`; read them with `ppr config get`.
+
+`plugins/README.md` has the long version, with the two programs ppr ships as
+worked examples.
+
 ## Architecture
 
 Two packages, one boundary:
@@ -564,6 +622,9 @@ Imports no platform API. Everything it touches is a port: `Storage`, `Clock`,
 `AIProvider`, `Transcriber`, `Fetcher`.
 - `ppr` — the CLI. Commander, colour, prompts. Parses arguments, calls core,
 renders the result.
+
+Plus `plugins/`, which is neither: two ordinary programs that ppr ships, puts on
+your `PATH`, and finds by name. Nothing in `packages/` imports them.
 
 The browser repeats that split one level down: `ui/state.ts` is a pure reducer
 (keys in, new state plus an effect out) with no terminal or vault access, and
@@ -580,7 +641,7 @@ engine against an in-memory store with no filesystem involved. See
 
 ```bash
 pnpm build       # both packages
-pnpm test        # 209 tests, no network required
+pnpm test        # 286 tests, plugins included, no network required
 pnpm eval        # scores the memory pipeline against a real model (costs money)
 pnpm typecheck
 ```

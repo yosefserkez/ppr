@@ -5,7 +5,7 @@ description: Working on the ppr codebase — a local-first markdown note CLI wit
 
 # Working on ppr
 
-`AGENTS.md` at the repo root is the canonical context: philosophy, the twelve
+`AGENTS.md` at the repo root is the canonical context: philosophy, the thirteen
 invariants, the data model, conventions, and the bugs already learned from.
 **Read it before your first change in a session.** This skill is the task-shaped
 companion — what to do, in what order, for the changes that come up most.
@@ -52,10 +52,12 @@ file somebody typed `date:` into by hand.
    the timeline; it completes rather than becoming untrue.
 6. **Am I solving a problem someone actually has?** The dependency list is three
    packages. Keep it that way.
-7. **Is the OS already doing this?** Then hand it over rather than rebuilding
-   it — `$EDITOR`, `launchd`, notifications, Reminders.app. Everything ppr
-   hands over is one-way and fire-and-forget, and the vault write happens first
-   so a failure costs a stderr line and never an entry (`references/memory.md`).
+7. **Is something else already doing this?** Then hand it over rather than
+   rebuilding it — `$EDITOR`, `launchd`, a program named by convention on PATH.
+   Everything outside the vault is a third-party tool, the OS included (I13):
+   ppr emits an event or prints something pipeable, and a separate program
+   acts. One-way, fire-and-forget, vault write first, so a failure costs a
+   stderr line and never an entry (`references/plugins.md`).
 
 ## Recipes
 
@@ -68,7 +70,8 @@ Load the reference for the task at hand:
 | Add or change an interactive terminal view | `references/interactive-ui.md` |
 | Add something that can be misconfigured or missing | `references/checks.md` |
 | Change what ppr learns, a fact's shape, or a prompt | `references/memory.md` |
-| Hand something to macOS — a notification, a reminder | `references/memory.md` |
+| Add an event, a hook, a plugin, or a `ppr-foo` subcommand | `references/plugins.md` |
+| Hand something to another program — a notification, a push | `references/plugins.md` |
 
 ## Always, regardless of task
 
