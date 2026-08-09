@@ -5,10 +5,11 @@
 # The installed binary is a small wrapper, not a copy: edit the source, run
 # `ppr`, and it rebuilds itself first. Nothing to reinstall after a `git pull`.
 #
-# The plugins in plugins/ go on PATH alongside it, because `ppr brief --notify`
-# and `ppr remind --push` resolve them by name and would otherwise be flags
-# that explain why they did nothing. They are symlinks into the repo, so they
-# update with a `git pull` too, and they are inert on anything but macOS.
+# The plugins in plugins/ go on PATH alongside it, because `ppr brief --notify`,
+# `ppr remind --push`, and `ppr contact` all resolve them by name and would
+# otherwise be flags and words that explain why they did nothing. They are
+# symlinks into the repo, so they update with a `git pull` too, and they are
+# inert on anything but macOS.
 #
 #   ./scripts/install.sh               install or update
 #   ./scripts/install.sh --uninstall   remove it, plugins included
@@ -35,8 +36,9 @@ while [ $# -gt 0 ]; do
 done
 
 # The reference consumers, installed by name because that is how they are
-# found: `--notify` looks for `ppr-notify` on PATH and nowhere else.
-PLUGIN_NAMES="ppr-notify ppr-reminders-push"
+# found: `--notify` looks for `ppr-notify` on PATH and nowhere else, and
+# `ppr contact` is `ppr-contact` for exactly the same reason.
+PLUGIN_NAMES="ppr-notify ppr-reminders-push ppr-contact"
 
 # --- pick an install directory that is already on PATH ------------------------
 

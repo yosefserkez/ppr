@@ -1,11 +1,11 @@
 # ppr plugins
 
-Two small programs that ppr ships and does not depend on.
+Three small programs that ppr ships and does not depend on.
 
 They are here because **everything outside the vault is a third-party tool, the
 operating system included** (I13 in [AGENTS.md](../AGENTS.md)). ppr writes
 markdown and says what it did; posting a banner, filing a reminder, ringing a
-bell, and lighting a lamp are all somebody else's job. These two are the
+bell, and lighting a lamp are all somebody else's job. These three are the
 reference somebody, and the reason `ppr brief --notify` and `ppr remind --push`
 work the minute you install ppr.
 
@@ -14,9 +14,10 @@ Nothing in ppr imports them. They are found by name on `PATH`.
 ```
 ppr-notify              text on stdin  ->  a macOS notification
 ppr-reminders-push      a ppr event on stdin  ->  a reminder in Reminders.app
+ppr-contact             a name, or an event   ->  a card in Contacts.app
 ```
 
-## The two shapes of consumer
+## The three shapes of consumer
 
 **Reads compose with pipes.** `ppr-notify` is the read composer. It takes text
 on stdin and shows it; it has never heard of ppr and would work just as well on
@@ -46,6 +47,42 @@ The flag names the intent; this file name resolves the tool.
 
 `ppr hooks add entry.created ppr-reminders-push` writes that same block for
 you, and `ppr plugins` shows what is currently wired.
+
+**Pulls ask questions.** `ppr-contact` is the pull consumer, and the pattern is
+the whole of it:
+
+> **A pull plugin, in any language, is: call `ppr … --json`, transform, act.**
+
+```sh
+ppr contact "John Doe"                     # a subcommand: ppr-contact on PATH
+ppr contact "John Doe" --dry-run           # the AppleScript it would run
+ppr hooks add fact.learned ppr-contact     # and keep the card current
+```
+
+It reads the person's facts out of `ppr context "<name>" --json`, picks out a
+phone number, an email address, and a birthday with plain patterns, and writes
+a card. Nothing is invented, no model runs, and nothing is read back.
+
+Both doors, one program. As a subcommand the name comes from `argv`; as a hook
+on `fact.learned` the event says *who* and the pull fills in *what* — a card
+built from the single event would carry whichever field that one fact mentioned
+and overwrite the two ppr already knew.
+
+**It needs no new parser.** "remember John Doe as a contact with phone 555 0100"
+is an ordinary thing to write down, and `ppr memory learn` already turns it into
+the fact `John Doe's phone number is 555 0100`. Moving that to the operating
+system is this program's entire job:
+
+```sh
+ppr "remember John Doe as a contact with phone 555 0100"
+ppr memory learn
+ppr contact "John Doe"
+```
+
+Everything it writes is labelled `ppr` and replaced on the next run, so a hook
+firing on every learned fact converges on one card instead of stacking up
+numbers — and a field you typed in yourself has a different label and is never
+touched.
 
 ## The deep link is the file
 
@@ -78,7 +115,8 @@ in. It is `$EDITOR`, and `git foo` → `git-foo`, applied to delivery.
 
 ## Writing your own, in any language
 
-A consumer needs to read stdin and exit. That is the entire interface.
+A consumer needs to read stdin and exit, or to call `ppr … --json` and act on
+the answer. That is the entire interface.
 
 ```sh
 #!/bin/sh
@@ -129,7 +167,8 @@ holding to them itself:
 | `osascript.js` | the three lines that shell out, plus stdin reading |
 | `ppr-notify` | the read composer |
 | `ppr-reminders-push` | the write consumer |
-| `test/` | the builders and the event filter, run by `pnpm test` |
+| `ppr-contact` | the pull consumer |
+| `test/` | the builders, the extraction, and the event filters, run by `pnpm test` |
 
 Plain CommonJS with no dependencies and no build step, so a plugin runs under
 whatever node is on the machine, from wherever it was installed. The

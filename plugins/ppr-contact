@@ -1,0 +1,311 @@
+#!/usr/bin/env node
+/**
+ * ppr-contact — a person ppr knows about, as a card in Contacts.app.
+ *
+ *   ppr contact "John Doe"                    a subcommand: this file, on PATH
+ *   ppr contact "John Doe" --dry-run          the AppleScript, and nothing else
+ *   ppr hooks add fact.learned ppr-contact    the same card, kept current
+ *
+ * **The pull consumer.** Its siblings are pushed to — an event arrives and they
+ * act on what it carried. This one asks ppr questions instead, which is the
+ * other half of the extension surface and the half with no worked example
+ * until now: `ppr … --json` is a supported interface for anybody, in any
+ * language, and this file is what building on it looks like.
+ *
+ * It is allowed exactly four things: its own argv, an event on stdin,
+ * `PPR_VAULT`, and shelling out to `ppr … --json`. It imports nothing from ppr
+ * and ppr imports nothing from it; ppr has never heard the word "contact".
+ *
+ * One-way, like everything on this side of the line. Nothing is read back out
+ * of Contacts, so a number edited over there does not reach the vault — two
+ * owners of one row is the end of the markdown being the truth (ppr's I1).
+ *
+ * Everything it writes is labelled `ppr` and replaced on the next run, so a
+ * hook that fires on every learned fact converges on one card rather than
+ * stacking up numbers, and a field somebody typed in themselves is never
+ * touched.
+ */
+
+'use strict';
+
+const { spawnSync } = require('node:child_process');
+const { contactScript } = require('./applescript.js');
+const { note, osascript, readStdin, supported } = require('./osascript.js');
+
+const USAGE = `usage: ppr contact <name> [--dry-run]
+       <event json> | ppr-contact
+
+Builds or updates a card in Contacts.app from what ppr already knows about a
+person: a phone number, an email address, and a birthday, read out of their
+facts. Nothing is invented and nothing is read back.
+
+  ppr contact "John Doe"                     from the facts ppr holds
+  ppr contact "John Doe" --dry-run           print the AppleScript instead
+  ppr hooks add fact.learned ppr-contact     update the card as ppr learns
+
+Facts get there the way every fact does — "remember John Doe as a contact with
+phone 555 0100" is an ordinary thing to write down, and \`ppr memory learn\`
+turns it into "John Doe's phone number is 555 0100". This program is only what
+moves it to the operating system.`;
+
+// ---------------------------------------------------------------- extraction
+//
+// Every rule below is deterministic and reads only what the fact says. A model
+// decided these sentences were worth keeping; deciding that a string of digits
+// is a phone number needs no second opinion, and one that changed its mind
+// between runs would rewrite somebody's card at random.
+
+const EMAIL = /[^\s<>@,;]+@[^\s<>@.,;]+(?:\.[^\s<>@.,;]+)+/;
+
+function emailIn(text) {
+  const found = EMAIL.exec(String(text || ''));
+  // A trailing full stop belongs to the sentence, not to the address.
+  return found ? found[0].replace(/[.,;:]+$/, '') : null;
+}
+
+const PHONE = /\+?\(?\d[\d\s().-]{5,}\d/;
+
+function phoneIn(text) {
+  // ISO days go first. `2026-08-10` is eight digits around separators, which
+  // is indistinguishable from a phone number to a pattern — and a fact store
+  // full of dates would otherwise put one on every card.
+  const line = String(text || '').replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ');
+  const found = PHONE.exec(line);
+  if (!found) return null;
+  const number = found[0].trim().replace(/[\s.-]+$/, '');
+  // Seven digits is the shortest thing anybody dials. Below that it is a
+  // quantity, a version, or a door number.
+  if ((number.match(/\d/g) || []).length < 7) return null;
+  // Kept exactly as it was written. `+44 20 7946 0958` and `(555) 010-9999`
+  // are both how somebody's number is spelled, and a plugin that tidied them
+  // into one house format is a plugin that eventually drops a country code.
+  return number;
+}
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * The birthday a fact carries, or nothing.
+ *
+ * Three conditions, and all three are the fact's own words rather than this
+ * program's judgement: it says "birthday", ppr gave it a calendar day, and ppr
+ * marked it as recurring. The last one is what keeps "we celebrated Emily's
+ * birthday on 3 May" — a thing that happened once — off the card.
+ *
+ * `0000` is ppr's year for a birthday whose year nobody knows. It is passed
+ * through as it is; translating it to whatever Contacts uses for the same idea
+ * is the AppleScript's job, next to the rest of what Contacts believes.
+ */
+function birthdayIn(fact) {
+  if (!fact || !/\bbirthday\b/i.test(String(fact.text || ''))) return null;
+  if (fact.recurs !== 'yearly') return null;
+  const day = ISO_DAY.exec(String(fact.date || ''));
+  if (!day) return null;
+  return { year: Number(day[1]), month: Number(day[2]), day: Number(day[3]) };
+}
+
+/** Whether a fact carries anything a card has a field for. */
+const contactish = (fact) =>
+  Boolean(emailIn(fact && fact.text) || phoneIn(fact && fact.text) || birthdayIn(fact));
+
+const POSSESSIVE = /^([A-Z][\p{L}'’-]*(?:\s+[A-Z][\p{L}'’-]*){0,2})['’]s\b/u;
+const FULL_NAME = /^([A-Z][\p{L}'’-]*(?:\s+[A-Z][\p{L}'’-]*){1,2})\b/u;
+
+/**
+ * The person a fact is about, or nothing.
+ *
+ * Two shapes, both of which the writer chose deliberately: a possessive
+ * ("Emily's phone number is …") or two or more capitalised words ("John Doe
+ * can be reached at …"). A single leading capital is not enough — "The lease
+ * ends …" begins with one, and a card called The is worse than no card.
+ *
+ * Facts are one line and start with their subject, which is what makes this
+ * work at all; anything more ambitious would be a name parser, and a name
+ * parser is a thing that is wrong in a different language.
+ */
+function personIn(text) {
+  const line = String(text || '').trim();
+  const owned = POSSESSIVE.exec(line);
+  if (owned) return owned[1];
+  const full = FULL_NAME.exec(line);
+  return full ? full[1] : null;
+}
+
+/**
+ * Whether a fact is about this person.
+ *
+ * Necessary, and not obvious: `ppr context <query> --json` hands back the
+ * *whole* fact store while the store is small, because a few hundred one-line
+ * facts is a small prompt and that is the point of them. Trusting the query to
+ * have filtered would put the neighbour's phone number on John Doe's card.
+ */
+function mentions(text, name) {
+  const haystack = ` ${String(text || '').toLowerCase()} `;
+  return String(name)
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((part) => haystack.includes(part.toLowerCase()));
+}
+
+/**
+ * What to write, from what ppr knows.
+ *
+ * The first fact to offer a field wins, and ppr hands them over newest first,
+ * so a number learned last week beats the one from last year without this
+ * having to reason about time. The old fact is still in the vault, which is
+ * where a disagreement gets settled — `ppr memory review`, by a person.
+ */
+function cardFor(name, facts) {
+  const card = { name };
+  for (const fact of facts || []) {
+    const text = String((fact && fact.text) || '');
+    if (!mentions(text, name)) continue;
+    if (!card.email) card.email = emailIn(text) || undefined;
+    if (!card.phone) card.phone = phoneIn(text) || undefined;
+    if (!card.birthday) card.birthday = birthdayIn(fact) || undefined;
+  }
+  return card;
+}
+
+// --------------------------------------------------------------------- pull
+
+/**
+ * Asks ppr what it knows about somebody.
+ *
+ * `--vault` is written out rather than inherited: a hook runs wherever the
+ * command that fired it was run, and `PPR_VAULT` is the only thing in the
+ * environment that says which vault this is about.
+ *
+ * Null means "could not ask"; an empty array means "asked, nothing there".
+ * They are different answers and only one of them is worth a line on stderr —
+ * the same distinction ppr makes internally between a model that failed and a
+ * model that found nothing (its L21).
+ */
+function pullFacts(name, env) {
+  const vault = (env || process.env).PPR_VAULT;
+  const args = (vault ? ['--vault', vault] : []).concat(['context', name, '--json']);
+  const result = spawnSync('ppr', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (result.error || result.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return Array.isArray(parsed.facts) ? parsed.facts : [];
+  } catch {
+    return null;
+  }
+}
+
+// --------------------------------------------------------------------- hook
+
+/**
+ * Whose card an event is about, or nothing at all.
+ *
+ * `fact.learned` and `fact.refined` are the two moments a fact's wording is
+ * new. Hooks fire for everything, so most events reaching here are somebody
+ * else's business and leave silently.
+ *
+ * The event decides *who*; it deliberately does not decide *what*. A card
+ * assembled from one event would carry whichever single field that fact
+ * happened to mention and would then overwrite the two ppr already knew — so
+ * the event is a trigger and the pull is the content, and both modes of this
+ * program build the card exactly the same way.
+ */
+function subject(event) {
+  if (!event || (event.event !== 'fact.learned' && event.event !== 'fact.refined')) return null;
+  const entry = event.entry;
+  if (!entry) return null;
+  const extra = entry.extra || {};
+  const fact = {
+    // The first line, which is where a fact ends — the rest of a hand-edited
+    // file is its author's business.
+    text: String(entry.body || entry.title || '').split('\n')[0].trim(),
+    date: extra.date,
+    recurs: extra.recurs,
+  };
+  return contactish(fact) ? personIn(fact.text) : null;
+}
+
+// --------------------------------------------------------------------- main
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    note(USAGE);
+    return 0;
+  }
+  const dryRun = argv.includes('--dry-run');
+  const named = argv.filter((arg) => !arg.startsWith('-')).join(' ').trim();
+
+  // argv wins, and stdin is only read when there is no name: `ppr contact
+  // "John Doe"` inherits a terminal, and a program that waited on that would
+  // hang exactly where a person is watching it.
+  const raw = named ? '' : (await readStdin()).trim();
+  if (!named && !raw) {
+    note(USAGE);
+    return 2;
+  }
+
+  let event = null;
+  if (raw) {
+    try {
+      event = JSON.parse(raw);
+    } catch {
+      note('ppr-contact: that was not JSON.');
+      return 2;
+    }
+  }
+
+  const name = named || subject(event);
+  // Not our event. Silent, because this runs on every fact ppr learns.
+  if (!name) return 0;
+
+  const facts = pullFacts(name);
+  if (facts === null) {
+    note(`ppr-contact: could not ask ppr about ${name} — is \`ppr\` on your PATH?`);
+    return 0;
+  }
+
+  const card = cardFor(name, facts);
+  if (!card.phone && !card.email && !card.birthday) {
+    note(`ppr-contact: nothing that looks like contact details for ${name}.`);
+    return 0;
+  }
+
+  const script = contactScript(card);
+  // Its own dry run, for the direct invocation. `ppr contact … --dry-run`
+  // never gets here — ppr prints what it would exec and stops — but a plugin
+  // is also a program somebody runs on its own, and the honest preview of this
+  // one is the script itself. On stderr, dim of nothing, because a plugin's
+  // stdout belongs to whatever it is piped into (ppr's I10).
+  if (dryRun) {
+    note(script);
+    return 0;
+  }
+
+  if (!supported()) {
+    // Never non-zero: a hook target that turns a Linux user's capture red is
+    // worse than no card at all.
+    note('ppr-contact: Contacts.app is macOS only — nothing written.');
+    return 0;
+  }
+
+  const result = await osascript(script, { timeoutMs: 20_000 });
+  if (!result.ok) {
+    note(`ppr-contact: ${result.hint}`);
+    return 1;
+  }
+  return 0;
+}
+
+// Only when run as a command: the extraction above is unit-tested by requiring
+// this file, and requiring it must not go looking for an event on stdin.
+if (require.main === module) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      note(`ppr-contact: ${err && err.message ? err.message : err}`);
+      process.exit(1);
+    },
+  );
+}
+
+module.exports = { birthdayIn, cardFor, contactish, emailIn, mentions, personIn, phoneIn, subject };

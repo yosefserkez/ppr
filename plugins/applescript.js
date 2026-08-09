@@ -1,5 +1,5 @@
 /**
- * Talking to macOS, for the two plugins that do.
+ * Talking to macOS, for the plugins that do.
  *
  * This used to be `core/src/node/macos.ts`, back when ppr itself knew what a
  * notification was. It does not any more: everything outside the vault is a
@@ -103,6 +103,101 @@ function reminderScript(reminder) {
 }
 
 /**
+ * The label ppr writes its fields under.
+ *
+ * Contacts allows several phones and emails per card, each with a label, and
+ * that is what makes this safe to run again: the fields ppr wrote are found by
+ * this label and replaced, so a hook firing on every learned fact converges on
+ * one card instead of stacking up thirty numbers. A number somebody typed in
+ * themselves has a different label and is never touched — the whole point of
+ * one-way is that the other app keeps what is its.
+ */
+const CONTACT_LABEL = 'ppr';
+
+/**
+ * Contacts' own year for "a birthday with no birth year".
+ *
+ * ppr writes `0000` for an unknown year; Contacts stores 1604, which is what
+ * its UI shows as a birthday with no age attached. Neither is a real year and
+ * both mean the same thing, so this is a translation between two conventions
+ * rather than a guess — anything from 1000 up is somebody's actual birth year
+ * and is passed through untouched.
+ */
+const NO_BIRTH_YEAR = 1604;
+
+/**
+ * A name split the way Contacts stores one: first, and the rest.
+ *
+ * Contacts has no single "name" field to write — `name` is read-only and
+ * assembled from the parts — so a card has to be made with at least a first
+ * name. One word is a first name; everything after the first word is the last
+ * name, which is wrong for some names and is wrong in a way the person can see
+ * and fix, unlike a card that failed to be created at all.
+ */
+function splitName(name) {
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+}
+
+/**
+ * Create-or-update a card, in one script.
+ *
+ * Found by name first, because the alternative is a second John Doe every time
+ * a fact about him is learned. `save` at the end is not optional: Contacts
+ * keeps the change in memory until it is asked to commit, and a script that
+ * forgets it appears to work and writes nothing.
+ *
+ * The date carries the same two traps as a pushed reminder, for the same
+ * reasons: assembled from components rather than written as a literal, because
+ * an AppleScript date literal is read in the user's locale, and flattened to
+ * the 1st first, because assigning a month to a date sitting on the 31st rolls
+ * it into the next one.
+ */
+function contactScript(card) {
+  const { first, last } = splitName(card.name);
+  const label = applescriptString(CONTACT_LABEL);
+  const created = [`first name:${applescriptString(first)}`]
+    .concat(last ? [`last name:${applescriptString(last)}`] : [])
+    .join(', ');
+
+  const lines = [
+    'tell application "Contacts"',
+    `  set found to (every person whose name is ${applescriptString(card.name)})`,
+    '  if (count of found) is 0 then',
+    `    set thePerson to make new person with properties {${created}}`,
+    '  else',
+    '    set thePerson to item 1 of found',
+    '  end if',
+  ];
+
+  for (const [field, plural] of [['phone', 'phones'], ['email', 'emails']]) {
+    if (!card[field]) continue;
+    lines.push(
+      `  repeat with old in (every ${field} of thePerson whose label is ${label})`,
+      '    delete old',
+      '  end repeat',
+      `  make new ${field} at end of ${plural} of thePerson with properties {label:${label}, value:${applescriptString(card[field])}}`,
+    );
+  }
+
+  if (card.birthday) {
+    const { year, month, day } = card.birthday;
+    lines.push(
+      '  set d to current date',
+      '  set day of d to 1',
+      `  set year of d to ${year >= 1000 ? year : NO_BIRTH_YEAR}`,
+      `  set month of d to ${month}`,
+      `  set day of d to ${day}`,
+      '  set time of d to 0',
+      '  set birth date of thePerson to d',
+    );
+  }
+
+  lines.push('  save', 'end tell');
+  return lines.join('\n');
+}
+
+/**
  * The app macOS holds responsible for a terminal process.
  *
  * The same table `core/src/node/microphone.ts` keeps for the microphone
@@ -144,8 +239,12 @@ function osascriptHint(stderr, env = process.env) {
 
 module.exports = {
   applescriptString,
+  contactScript,
+  CONTACT_LABEL,
+  NO_BIRTH_YEAR,
   notifyScript,
   osascriptHint,
   reminderScript,
   responsibleApp,
+  splitName,
 };
