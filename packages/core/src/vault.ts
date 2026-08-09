@@ -107,6 +107,28 @@ function chunkEntries(entries: Entry[]): Entry[][] {
 }
 
 /**
+ * Whether a title names a thing, and is therefore worth linking mentions of.
+ *
+ * Shortness was the whole test, and shortness cannot tell "Emily" from "Fix
+ * it". Titles are derived from the first line when none is given, so a vault
+ * of one-line logs turned every "Deploy", "The plan", and "Fix it" into
+ * linkable vocabulary and gave back "could not [[deploy]] today so I had to
+ * [[fix it]] before [[the plan]] was ready" — brackets around ordinary prose,
+ * pointing at entries about nothing in particular.
+ *
+ * Capitalisation is the signal the writer is already sending. A name keeps its
+ * capital wherever it appears in a sentence; an ordinary word only has one
+ * when it happens to come first. So every word has to carry one — which lets
+ * "Emily", "Redis Migration", and "iPhone 15" through and stops a sentence
+ * fragment, without ppr having to guess at what the words mean.
+ */
+function namesAThing(title: string): boolean {
+  const words = title.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 3) return false;
+  return words.every((word) => /[A-Z]/.test(word) || !/[a-z]/.test(word));
+}
+
+/**
  * Collapses candidates from one run that say the same thing, merging what
  * each of them knew.
  *
@@ -205,17 +227,13 @@ export class Vault {
 
   /**
    * The names worth linking: everything already written as `[[a link]]`, plus
-   * titles short enough to be about a thing rather than an event. A sentence
-   * of a title — "Decided to drop redis, memcached is faster" — names no
-   * entity, and linking it would be noise.
+   * the titles that name something rather than describe what happened.
    */
   private linkVocabulary(): string[] {
     const out = new Set<string>();
     for (const entry of this.catalog.entries()) {
       for (const link of entry.links) out.add(link);
-      if (entry.kind !== MEMORY_KIND && entry.title.split(/\s+/).length <= 3) {
-        out.add(entry.title.toLowerCase());
-      }
+      if (entry.kind !== MEMORY_KIND && namesAThing(entry.title)) out.add(entry.title.toLowerCase());
     }
     return [...out];
   }

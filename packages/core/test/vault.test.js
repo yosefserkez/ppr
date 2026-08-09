@@ -142,6 +142,26 @@ test('reindex leaves a hand-placed file exactly where its author put it', async 
   assert.ok(await storage.read('entries/inbox/whatever.md'), 'it is just markdown; ppr does not tidy');
 });
 
+test('auto-linking follows names, not every short title', async () => {
+  const { vault } = await makeVault({ capture: { ...DEFAULT_CONFIG.capture, autoLink: true } });
+  await vault.add({ body: 'Emily', kind: 'note' });
+  await vault.add({ body: 'Redis Migration', kind: 'note' });
+  // Titles are taken from the first line when none is given, so a vault of
+  // one-line logs is full of these. Length alone made all three linkable.
+  await vault.add({ body: 'Fix it', kind: 'log' });
+  await vault.add({ body: 'The plan', kind: 'log' });
+
+  const entry = await vault.add({
+    body: 'Told Emily about the redis migration, then had to fix it before the plan was ready',
+    kind: 'log',
+  });
+
+  assert.match(entry.body, /\[\[Emily\]\]/);
+  assert.match(entry.body, /\[\[redis migration\]\]/);
+  assert.ok(!/\[\[fix it\]\]/.test(entry.body), 'a sentence fragment is not a name');
+  assert.ok(!/\[\[the plan\]\]/.test(entry.body), 'nor is "The plan"');
+});
+
 test('stats count what is actually there', async () => {
   const { vault } = await makeVault();
   await vault.add({ body: 'one two three #a', kind: 'log' });
