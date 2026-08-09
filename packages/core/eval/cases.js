@@ -64,6 +64,80 @@ export const CASES = [
     ],
   },
 
+  // ---------------------------------------------------------------- recall
+  {
+    // The case that would have caught the lossy backfill. Every earlier case
+    // hands the model one or two entries, which is the size at which nothing
+    // can go wrong: the reply fits any output budget and every entry gets the
+    // model's full attention. A real day does not look like that. 29 entries
+    // were read as roughly two thirds of themselves for weeks, and the suite
+    // scored 100% throughout, because no case was ever big enough to notice.
+    //
+    // Eight entries, deliberately over EXTRACT_CHUNK_CHARS so the batch spans
+    // more than one extraction call. Each carries exactly one durable fact
+    // about a different person, service, or tool, so nothing here can be
+    // reconciled away — a missing fact means an entry was not read.
+    name: 'a day of entries too big for one prompt loses none of them',
+    dimension: 'recall',
+    rounds: [
+      {
+        entries: [
+          {
+            name: 'sync',
+            text: `Team sync ran long again. The one thing worth keeping: Priya has moved to the Berlin office for good, so our overlap window is down to about three hours a day. Spent the rest of the morning on that flaky snapshot test that only fails in CI, still no idea why. Cleared the review queue at least, which took longer than it should have. Coffee machine on the third floor is broken again and nobody has called anyone about it. Tomorrow is mostly meetings, unfortunately.`,
+          },
+          {
+            name: 'postmortem',
+            text: `Incident postmortem this afternoon, mostly calm, nobody got blamed. Marcus is the on-call lead for Checkout now that the rota was redrawn, so pages about payments go to him first. The write-up is half done and I want to finish it before Friday. Feeling a bit fried after two days of this. Reminder to myself to actually take a lunch break tomorrow instead of eating at the desk again while reading dashboards.`,
+          },
+          {
+            name: 'design',
+            text: `Long design review, three hours with a break in the middle. The shared component library finally has a name — it is called Halyard, and that is what we will refer to in docs and tickets from here on. Bikeshedding took forty minutes, which is about what I expected given the number of people in the room. Still owe them a decision on the icon set. Went for a walk after, which helped. Tired but it was worth it in the end.`,
+          },
+          {
+            name: 'infra',
+            text: `Infrastructure planning session, the second one this month. We are standardising on Terraform for all environment provisioning — the mix of hand-rolled scripts and console clicking has cost us an outage twice this quarter. Migration will take a while and I have not scoped it yet. Also spent an hour fighting a VPN issue that turned out to be my own DNS. Nothing else of note today, quiet otherwise, which was a relief.`,
+          },
+          {
+            name: 'dinner',
+            text: `Planning the team dinner for next month and it is harder than it should be. Anna is allergic to shellfish, so wherever we book has to have something else on the menu she can eat. Three venues shortlisted, no decision yet. Otherwise a slow day — mostly triage, a couple of small pull requests, and a long thread about whether we need another standup. We do not. Head is a bit foggy today, might be the weather.`,
+          },
+          {
+            name: 'costs',
+            text: `Cost review with finance, slides and everything. Our staging cluster is hosted in AWS eu-west-1, which is the thing I keep having to look up, so writing it down here. The bill is higher than expected but most of it is the search tier and that is being replaced anyway. Half of the afternoon went on a spreadsheet nobody will read twice. Weather was grim. Nothing shipped today, which is fine, it was that kind of day.`,
+          },
+          {
+            name: 'integration',
+            text: `Caught up with Tomas about the integration work, first proper conversation in weeks. He prefers to be contacted on Telegram rather than email, which explains why my last two messages sat unanswered for a week and a half. The integration itself is maybe a third done and blocked on their side. Grabbed lunch after. Meant to write up the API notes this evening but ran out of energy, so it moves to tomorrow.`,
+          },
+          {
+            name: 'docs',
+            text: `Documentation cleanup day, which I had been putting off. The company wiki has moved from Confluence to Notion, and the old space is read-only from now on, so any link I find in an old ticket needs updating by hand. Moved about twenty pages before I got bored. The search is better, the editor is worse. Also had a dentist appointment which ate most of the morning and I am still numb on one side.`,
+          },
+        ],
+        expect: {
+          facts: [
+            { must: ['priya', 'berlin'] },
+            { must: ['marcus', 'checkout'] },
+            { must: ['halyard'] },
+            { must: ['terraform'] },
+            { must: ['anna', 'shellfish'] },
+            { must: ['eu-west-1'] },
+            { must: ['tomas', 'telegram'] },
+            { must: ['notion'] },
+          ],
+          // The filler is the other half of the measurement: a model that
+          // survives eight entries by keeping everything has not passed.
+          forbid: [['coffee'], ['dentist'], ['bikeshedding'], ['vpn']],
+          // Eight is the floor. A handful more is defensible — "the old
+          // Confluence space is read-only" is a real fact — but a number well
+          // above that means the entries were shattered rather than read.
+          total: [8, 13],
+        },
+      },
+    ],
+  },
+
   // ------------------------------------------------------------- precision
   {
     name: 'a day of status updates yields nothing durable',
