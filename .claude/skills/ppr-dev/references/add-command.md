@@ -6,7 +6,8 @@
 | --- | --- |
 | `commands/capture.ts` | Anything that creates entries: write, dump, clip, voice, append, rm |
 | `commands/browse.ts` | Anything that reads them: ls, search, show, edit, tags, links, path, stats, export |
-| `commands/think.ts` | AI-shaped verbs: recap, ask, memory |
+| `commands/think.ts` | What ppr does with entries: recap, brief, ask, context, memory |
+| `commands/schedule.ts` | Putting a ppr command on the OS scheduler |
 | `commands/settings.ts` | init, config, ai, doctor, reindex |
 
 A genuinely new category earns a new file. Five commands in the wrong file is
@@ -64,7 +65,7 @@ lesson L9 in AGENTS.md.
 
 ```ts
 throw new PprError('EINVALID', `Not a URL: ${url}`);
-throw new PprError('ENOAI', 'Extracting memories needs a model', 'Run `ppr ai setup`.');
+throw new PprError('ENOAI', 'Extracting facts needs a model', 'Run `ppr ai setup`.');
 ```
 
 Codes map to exit codes in `index.ts`: `EINVALID` 2, `ENOTFOUND`/`EAMBIGUOUS` 3,
@@ -89,3 +90,12 @@ test('thing does the thing', async () => {
 
 Pass `{ input: '…' }` to send stdin, `{ editor: '/path/to/script' }` to stand in
 for `$EDITOR`. Assert exit codes for failure paths — they are part of the contract.
+
+The harness sets `PPR_NO_AI=1`, so what a CLI test exercises is the offline path.
+If your command only makes sense with a model, the model-shaped half belongs in
+`core/test/ai.test.js` against a scripted provider.
+
+**A numeric flag that is not `filterFlags()`' own parses itself, and must refuse
+what it cannot read.** `Number('abc')` is NaN, and NaN is a silent "no limit" to
+a slice and "no window" to a filter — a typo made `ppr memory ls --limit abc`
+report an empty fact store.

@@ -1,11 +1,11 @@
 ---
 name: ppr-dev
-description: Working on the ppr codebase — a local-first markdown note CLI with a portable core and a terminal UI. Use when adding or changing commands, AI providers, storage adapters, interactive views, or the entry format; when deciding whether code belongs in @ppr/core or the CLI; or when reviewing a change against the project's invariants. Covers the architecture, the non-negotiable rules, and the traps that have already been hit.
+description: Working on the ppr codebase — a local-first markdown note CLI with a portable core and a terminal UI. Use when adding or changing commands, AI providers, storage adapters, interactive views, the memory layer that distils standing facts out of entries, or the entry format; when deciding whether code belongs in @ppr/core or the CLI; or when reviewing a change against the project's invariants. Covers the architecture, the non-negotiable rules, and the traps that have already been hit.
 ---
 
 # Working on ppr
 
-`AGENTS.md` at the repo root is the canonical context: philosophy, the ten
+`AGENTS.md` at the repo root is the canonical context: philosophy, the twelve
 invariants, the data model, conventions, and the bugs already learned from.
 **Read it before your first change in a session.** This skill is the task-shaped
 companion — what to do, in what order, for the changes that come up most.
@@ -26,7 +26,12 @@ mobile or web client implements those ports and reuses everything else verbatim.
 The terminal UI repeats the split one level down — pure reducer (`ui/state.ts`),
 pure rendering (`ui/layout.ts`), all I/O isolated in `ui/screen.ts`.
 
-## The five questions to ask before writing code
+A vault holds two trees. `entries/YYYY/MM/` is what happened; `memory/` is what
+is true — one-line facts distilled out of the journal, outside the timeline and
+rebuildable from it (I12). Facts are ordinary markdown entries with
+`kind: memory`; everything the layer adds rides in `Entry.extra`.
+
+## The six questions to ask before writing code
 
 1. **Would a future mobile app need this logic?** Then it goes in core, not the CLI.
 2. **Does it need `fs`, a subprocess, or `process.env`?** Then it cannot go in
@@ -35,7 +40,10 @@ pure rendering (`ui/layout.ts`), all I/O isolated in `ui/screen.ts`.
    answer. "It errors" is only acceptable when there is genuinely nothing to do.
 4. **What happens when it is piped?** Interactive behaviour must never change what
    a script sees.
-5. **Am I solving a problem someone actually has?** The dependency list is three
+5. **Is it something that happened, or something that is true?** The first is an
+   entry, the second is a fact — and a fact must stay out of `latest`, `ls`,
+   `recap`, and search unless `-k memory` asks for it (I12).
+6. **Am I solving a problem someone actually has?** The dependency list is three
    packages. Keep it that way.
 
 ## Recipes
@@ -48,6 +56,7 @@ Load the reference for the task at hand:
 | Add an AI provider or transcription backend | `references/add-provider.md` |
 | Add or change an interactive terminal view | `references/interactive-ui.md` |
 | Add something that can be misconfigured or missing | `references/checks.md` |
+| Change what ppr learns, a fact's shape, or a prompt | `references/memory.md` |
 
 ## Always, regardless of task
 
@@ -67,6 +76,11 @@ pnpm build && pnpm typecheck && pnpm test
 
 Then actually run the command you changed. Report what you verified and what you
 did not — untested paths are fine to have, but not to imply otherwise.
+
+`pnpm eval` is separate and deliberately not part of that line: it costs money,
+needs a network, and is not deterministic. Run it — with `--repeat 3` — when you
+change a prompt, the fact schema, or reconciliation, and never to check a
+refactor.
 
 ## Do not
 
