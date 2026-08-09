@@ -1,7 +1,7 @@
 import type { AIProvider } from '../ports.js';
 import type { Entry } from '../types.js';
 import { PprError } from '../errors.js';
-import { parseFactDate, type FactRecurrence } from '../memory.js';
+import { factKey, parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
 import { formatDay } from '../util/time.js';
@@ -461,9 +461,8 @@ export async function reconcileFacts(
   // Exact repeats are caught with no model involved, always. This is the floor
   // the model builds on rather than an alternative to it: a provider that
   // returns an empty list, or nonsense, must not be able to double the store.
-  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!?]+$/, '');
   const out: FactVerdict[] = candidates.map((text) => {
-    const hit = known.find((k) => norm(k.text) === norm(text));
+    const hit = known.find((k) => factKey(k.text) === factKey(text));
     return hit ? { verdict: 'duplicate' as const, of: hit.id } : { verdict: 'new' as const };
   });
 

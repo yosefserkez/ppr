@@ -15,6 +15,7 @@ import { PprError, noAI } from './errors.js';
 import { autoLink, backlinks, forwardLinks, graph, related, tagCounts } from './links.js';
 import {
   factExtra,
+  factKey,
   factTerms,
   FACT_KEYS,
   mentionScore,
@@ -103,6 +104,35 @@ function chunkEntries(entries: Entry[]): Entry[][] {
   }
   if (current.length) chunks.push(current);
   return chunks;
+}
+
+/**
+ * Collapses candidates from one run that say the same thing, merging what
+ * each of them knew.
+ *
+ * Reconciliation compares a candidate against what was *already* known, never
+ * against its siblings, so nothing else in the pipeline can catch this. A
+ * backfill is where it bites: a fact mentioned on Monday and again on Friday
+ * lands in two different chunks of the same run, comes back "new" twice, and
+ * the store doubles — in the command whose whole promise is that rebuilding
+ * the projection is free.
+ */
+function dedupe(candidates: tasks.FactCandidate[]): tasks.FactCandidate[] {
+  const byKey = new Map<string, tasks.FactCandidate>();
+  for (const candidate of candidates) {
+    const seen = byKey.get(factKey(candidate.text));
+    if (!seen) {
+      byKey.set(factKey(candidate.text), { ...candidate });
+      continue;
+    }
+    seen.from = mergeIds(seen.from, candidate.from);
+    // A second sighting may carry the date the first one did not mention.
+    if (!seen.date && candidate.date) {
+      seen.date = candidate.date;
+      if (candidate.recurs) seen.recurs = candidate.recurs;
+    }
+  }
+  return [...byKey.values()];
 }
 
 export interface VaultOptions {
@@ -593,7 +623,7 @@ export class Vault {
       candidates.push(...batch.facts);
     }
 
-    if (candidates.length) await this.absorb(candidates, result, opts.signal);
+    if (candidates.length) await this.absorb(dedupe(candidates), result, opts.signal);
 
     // Only a run that read the backlog may move the mark. `--since` and an
     // explicit list of entries read a window that can begin *after* it, and

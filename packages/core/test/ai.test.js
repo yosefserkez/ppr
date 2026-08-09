@@ -322,6 +322,24 @@ test('a batch too large for one prompt is split, and no entry is split with it',
   assert.match(piped[0].prompt, /Rae took over billing/);
 });
 
+test('one run cannot store the same fact twice', async () => {
+  // Reconciliation only compares a candidate with what was already known, so
+  // nothing downstream sees two candidates of one run agreeing with each
+  // other. A backfill is where that bites: a fact said on Monday and again on
+  // Friday lands in two chunks of the same run.
+  const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
+  for (let i = 0; i < 4; i++) {
+    await vault.add({ kind: 'log', body: `day ${i}: chocolate again. ${'x'.repeat(1600)}` });
+  }
+
+  const result = await vault.learn({ all: true });
+  assert.ok(result.scanned >= 4);
+  assert.equal(result.learned.length, 1, 'four chunks, one fact');
+  assert.equal(vault.facts().length, 1);
+  // Every source that mentioned it is still recorded — merged, not dropped.
+  assert.equal(toFact(result.learned[0]).from.length, 4);
+});
+
 test('facts live outside the journal tree', async () => {
   const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
   const [fact] = await vault.remember('emily likes chocolate');

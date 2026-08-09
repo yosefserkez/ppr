@@ -150,6 +150,16 @@ export function factExtra(fields: {
 }
 
 /**
+ * The key two facts share when they say the same thing in the same words.
+ *
+ * Not similarity — deciding that two different sentences mean one thing is the
+ * model's job. This is the floor underneath it: whatever a provider answers,
+ * or fails to answer, the same sentence twice must never become two facts.
+ */
+export const factKey = (text: string): string =>
+  text.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!?]+$/, '');
+
+/**
  * Words too ordinary to mean a fact is being talked about. Short words are
  * excluded by length; these are the long ones that carry no subject.
  */
