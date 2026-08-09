@@ -163,6 +163,34 @@ export function serializeEntry(entry: Entry): string {
   return serializeDocument(data, entry.body);
 }
 
+/**
+ * An entry as JSON — the one wire shape ppr publishes.
+ *
+ * `ppr ls --json`, `ppr show --json`, and the payload of every event that
+ * carries an entry are all this function. It lives in core rather than in the
+ * renderer because it is now an interface other people write code against: a
+ * hook reading an event and a script reading `--json` must be able to share a
+ * parser, and two definitions of "an entry, as JSON" would eventually disagree
+ * about a field.
+ *
+ * Owned frontmatter only. `extra` is deliberately absent — a fact's `date`,
+ * `from`, and `status` are exposed by `factJson`, which is where the memory
+ * layer decides what it publishes (I3 keeps them round-tripping either way).
+ */
+export const entryJson = (entry: Entry) => ({
+  id: entry.id,
+  kind: entry.kind,
+  title: entry.title,
+  created: entry.created,
+  updated: entry.updated,
+  tags: entry.tags,
+  links: entry.links,
+  ...(entry.source ? { source: entry.source } : {}),
+  ...(entry.pinned ? { pinned: true } : {}),
+  path: entry.path,
+  body: entry.body,
+});
+
 function firstDate(...candidates: unknown[]): Date {
   for (const c of candidates) {
     if (c instanceof Date && !Number.isNaN(c.getTime())) return c;

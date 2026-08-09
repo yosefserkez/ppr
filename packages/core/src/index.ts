@@ -10,6 +10,7 @@ export * from './ports.js';
 export * from './errors.js';
 export * from './config.js';
 export * from './entry.js';
+export * from './events.js';
 export * from './markdown.js';
 export * from './search.js';
 export * from './links.js';

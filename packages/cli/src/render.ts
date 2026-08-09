@@ -1,6 +1,6 @@
 import pc from 'picocolors';
 import type { Entry, SearchHit } from '@ppr/core';
-import { formatDay, formatTime, plainText, relativeAge, shortId, truncate } from '@ppr/core';
+import { entryJson, formatDay, formatTime, plainText, relativeAge, shortId, truncate } from '@ppr/core';
 
 export interface RenderOptions {
   json?: boolean;
@@ -39,20 +39,14 @@ export const json = (value: unknown): void => {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 };
 
-/** Machine-friendly projection of an entry. Stable: other tools depend on it. */
-export const entryJson = (entry: Entry) => ({
-  id: entry.id,
-  kind: entry.kind,
-  title: entry.title,
-  created: entry.created,
-  updated: entry.updated,
-  tags: entry.tags,
-  links: entry.links,
-  ...(entry.source ? { source: entry.source } : {}),
-  ...(entry.pinned ? { pinned: true } : {}),
-  path: entry.path,
-  body: entry.body,
-});
+/**
+ * Machine-friendly projection of an entry. Stable: other tools depend on it.
+ *
+ * Defined in core, not here, because it is the same shape an event carries on
+ * a hook's stdin — one definition, so `--json` (pull) and events (push) can
+ * never describe an entry differently.
+ */
+export { entryJson };
 
 const KIND_COLOR: Record<string, (s: string) => string> = {
   log: c.green,

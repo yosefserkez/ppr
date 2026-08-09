@@ -39,6 +39,7 @@ import {
   tidyReminder,
   type ParsedReminder,
 } from './remind.js';
+import { vaultEvent, type EventInput, type VaultEvent } from './events.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
@@ -189,6 +190,17 @@ export interface VaultOptions {
   provider?: AIProvider | undefined;
   transcriber?: Transcriber | undefined;
   fetcher?: Fetcher;
+  /**
+   * Told about every write. The host decides what listening means — the CLI
+   * spawns hooks, a mobile app redraws, a test records — because core has no
+   * subprocesses and no idea what a notification is (I8).
+   *
+   * Called after the write has reached storage, so anything a consumer does
+   * with it is a fact about the vault rather than a prediction. Whatever it
+   * throws is swallowed: a broken listener may not cost the user their words
+   * (I2's shape).
+   */
+  onEvent?: (event: VaultEvent) => void;
 }
 
 /**
@@ -207,6 +219,7 @@ export class Vault {
   private readonly transcriber: Transcriber | undefined;
   private readonly fetcher: Fetcher | undefined;
   private readonly catalog: Catalog;
+  private readonly listener: ((event: VaultEvent) => void) | undefined;
 
   private constructor(opts: VaultOptions, catalog: Catalog) {
     this.root = opts.root;
@@ -217,6 +230,24 @@ export class Vault {
     this.transcriber = opts.transcriber;
     this.fetcher = opts.fetcher;
     this.catalog = catalog;
+    this.listener = opts.onEvent;
+  }
+
+  /**
+   * Announces a change, and never lets the announcement cost the change.
+   *
+   * A listener that throws is a listener with a bug in it; the entry is
+   * already on disk and stays there (I2's shape). Silently, because there is
+   * no stderr in core to complain to — the host wired the listener and the
+   * host is the one that can report it.
+   */
+  private emit(input: EventInput): void {
+    if (!this.listener) return;
+    try {
+      this.listener(vaultEvent(input, { vault: this.root, now: this.clock.now() }));
+    } catch {
+      /* a broken listener costs its own notification and nothing else */
+    }
   }
 
   static async open(opts: VaultOptions): Promise<Vault> {
@@ -245,6 +276,7 @@ export class Vault {
       : input.body;
     const entry = createEntry({ ...input, body }, this.clock.now());
     await this.write(entry);
+    this.emit({ event: 'entry.created', entry });
     return entry;
   }
 
@@ -274,6 +306,7 @@ export class Vault {
     const next = applyPatch(current, patch, this.clock.now());
     if (next.path !== current.path) await this.storage.remove(current.path).catch(() => {});
     await this.write(next);
+    this.emit({ event: 'entry.updated', entry: next, previous: current });
     return next;
   }
 
@@ -281,6 +314,7 @@ export class Vault {
     const entry = this.catalog.resolve(ref);
     await this.storage.remove(entry.path);
     this.catalog.forget(entry);
+    this.emit({ event: 'entry.removed', entry });
     return entry;
   }
 
@@ -374,7 +408,7 @@ export class Vault {
         'Did you mean a different entry? `ppr remind <when> <text>` makes one that can be done.',
       );
     }
-    return this.update(
+    const done = await this.update(
       entry.id,
       this.reminderPatch({
         ...(date ? { date } : {}),
@@ -382,6 +416,11 @@ export class Vault {
         status: 'done',
       }),
     );
+    // On top of the `entry.updated` the write already announced, never instead
+    // of it: "a file changed" and "somebody finished a thing" are different
+    // subscriptions, and only one of them is worth a congratulation.
+    this.emit({ event: 'entry.completed', entry: done, previous: entry });
+    return done;
   }
 
   /**
@@ -766,7 +805,12 @@ export class Vault {
       duplicates: 0,
       unreadable: 0,
     };
-    if (!sources.length && !opts.text) return result;
+    if (!sources.length && !opts.text) {
+      // A run that found nothing new still ran, and a cron watcher wants to
+      // know that as much as it wants the busy nights.
+      this.emit({ event: 'learn.finished', ...result });
+      return result;
+    }
 
     const candidates: tasks.FactCandidate[] = [];
     // Only entries the model actually understood may advance the mark. A
@@ -810,6 +854,7 @@ export class Vault {
     // no model ever saw (L20, L21). A mark left behind costs a re-scan, which
     // reconciliation absorbs.
     if (!opts.entries && !opts.since) await this.markLearned(read);
+    this.emit({ event: 'learn.finished', ...result });
     return result;
   }
 
@@ -870,6 +915,7 @@ export class Vault {
       if (!target) {
         produced[i] = await this.writeFact(candidate);
         result.learned.push(produced[i]!);
+        this.emit({ event: 'fact.learned', entry: produced[i]! });
         continue;
       }
       if (verdict.verdict === 'duplicate') {
@@ -885,6 +931,7 @@ export class Vault {
         if (fact.origin === 'manual') {
           produced[i] = await this.writeFact(candidate);
           result.learned.push(produced[i]!);
+          this.emit({ event: 'fact.learned', entry: produced[i]! });
           continue;
         }
         produced[i] = await this.update(target.id, {
@@ -899,6 +946,7 @@ export class Vault {
           }),
         });
         result.refined.push(produced[i]!);
+        this.emit({ event: 'fact.refined', entry: produced[i]!, previous: target });
         continue;
       }
       // Contradiction: keep both, flag the pair, decide nothing.
@@ -909,6 +957,7 @@ export class Vault {
       );
       produced[i] = added;
       result.conflicts.push({ fact: added, with: marked });
+      this.emit({ event: 'conflict.found', entry: added, with: marked });
     }
   }
 
