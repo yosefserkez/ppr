@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import {
+  countdown,
+  dayKey,
   factText,
   formatDay,
   heuristicBrief,
@@ -10,7 +12,7 @@ import {
   truncate,
   type Fact,
   type LearnResult,
-  type UpcomingFact,
+  type Upcoming,
   type VaultContext,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
@@ -68,9 +70,18 @@ export function recapCommand(): Command {
  */
 export function briefCommand(): Command {
   return new Command('brief')
-    .description('what is coming up, from the facts ppr holds')
+    .description('what is coming up: dated facts, reminders, and anything else with a date')
     .option('--within <days>', 'how far ahead to look', '30')
     .option('--plain', 'skip the model and print the dates')
+    .addHelpText(
+      'after',
+      `
+--json gives one object per item, soonest first:
+  { "id", "kind", "text", "date": "YYYY-MM-DD", "days", "overdue",
+    "ordinal"?, "recurs", "mentions": [entry] }
+"days" is negative when it is overdue: an unfinished reminder stays visible
+for a week after its day.`,
+    )
     .action(async (flags: { within?: string; plain?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         const withinDays = number('--within', flags.within, 30);
@@ -81,12 +92,20 @@ export function briefCommand(): Command {
           if (g.json) {
             return json(
               items.map((item) => ({
-                id: item.fact.id,
-                text: item.fact.text,
-                date: item.date.toISOString().slice(0, 10),
+                id: item.item.id,
+                // A brief holds birthdays and dentist appointments now, and a
+                // script that acts on one and not the other needs to tell them
+                // apart without re-reading the entry.
+                kind: item.item.entry.kind,
+                text: item.item.text,
+                // `dayKey`, not `toISOString`: the occurrence is local
+                // midnight, and UTC would name the day before it east of
+                // Greenwich.
+                date: dayKey(item.date),
                 days: item.days,
+                overdue: item.days < 0,
                 ...(item.ordinal ? { ordinal: item.ordinal } : {}),
-                recurs: item.fact.recurs ?? null,
+                recurs: item.item.recurs ?? null,
                 mentions: item.mentions.map(entryJson),
               })),
             );
@@ -105,8 +124,8 @@ export function briefCommand(): Command {
     );
 }
 
-const briefItem = (item: UpcomingFact) => ({
-  text: item.fact.text,
+const briefItem = (item: Upcoming) => ({
+  text: item.item.text,
   days: item.days,
   when: formatDay(item.date),
   mentions: item.mentions.map((e) => e.title),
@@ -141,10 +160,12 @@ export function contextCommand(): Command {
             now: vault.now().toISOString(),
             facts: result.facts.map(factJson),
             upcoming: result.upcoming.map((u) => ({
-              id: u.fact.id,
-              text: u.fact.text,
-              date: u.date.toISOString().slice(0, 10),
+              id: u.item.id,
+              kind: u.item.entry.kind,
+              text: u.item.text,
+              date: dayKey(u.date),
               days: u.days,
+              overdue: u.days < 0,
             })),
             entries: result.entries.map(entryJson),
           });
@@ -166,8 +187,7 @@ function renderContext(result: VaultContext, now: Date, bodies: boolean): string
   if (result.upcoming.length) {
     lines.push('## Coming up', '');
     for (const item of result.upcoming) {
-      const when = item.days === 0 ? 'today' : item.days === 1 ? 'tomorrow' : `in ${item.days} days`;
-      lines.push(`- ${item.fact.text} — ${formatDay(item.date)}, ${when}`);
+      lines.push(`- ${item.item.text} — ${formatDay(item.date)}, ${countdown(item.days)}`);
     }
     lines.push('');
   }

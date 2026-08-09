@@ -162,6 +162,71 @@ test('auto-linking follows names, not every short title', async () => {
   assert.ok(!/\[\[the plan\]\]/.test(entry.body), 'nor is "The plan"');
 });
 
+test('upcoming counts down to anything dated, not only to facts', async () => {
+  const { vault } = await makeVault();
+  const now = new Date(2026, 7, 8);
+
+  await vault.addFact("Emily's birthday is 20 October");
+  const birthday = vault.facts()[0];
+  await vault.update(birthday.id, { extra: { date: '2002-10-20', recurs: 'yearly' } });
+  const reminder = await vault.addReminder('call the dentist', { date: '2026-08-10' });
+  // A file somebody wrote by hand and put a date in. It has never been near
+  // `ppr remind`, and it is upcoming all the same.
+  await vault.add({ body: 'Lease renewal', kind: 'note', extra: { date: '2026-08-09' } });
+  await vault.add({ body: 'lunch was fine', kind: 'log' });
+
+  const items = vault.upcoming({ withinDays: 400, now });
+  assert.deepEqual(
+    items.map((i) => i.item.text),
+    ['Lease renewal', 'call the dentist', "Emily's birthday is 20 October"],
+    'soonest first, whatever kind of thing it is',
+  );
+  assert.equal(items[1].days, 2);
+  assert.equal(items[1].item.entry.kind, 'reminder');
+  // A reminder is a thing that happened *and* a thing that is coming, so it is
+  // in the timeline too — unlike a fact (I12).
+  assert.ok(vault.list().some((e) => e.id === reminder.id));
+});
+
+test('a reminder that is done stops asking, and its file stays', async () => {
+  const { vault, storage } = await makeVault();
+  const now = new Date(2026, 7, 8);
+  const reminder = await vault.addReminder('call the dentist', { date: '2026-08-10' });
+
+  assert.equal(vault.upcoming({ now }).length, 1);
+  const done = await vault.complete(reminder.id);
+  assert.equal(done.extra.status, 'done');
+  assert.equal(done.extra.date, '2026-08-10', 'completing it must not lose the day it was for');
+  assert.equal(vault.upcoming({ now }).length, 0);
+
+  const raw = await storage.read(done.path);
+  assert.match(raw, /call the dentist/, 'done is a frontmatter key, not a delete');
+  assert.match(raw, /status: done/);
+});
+
+test('an overdue reminder is surfaced for a week, then let go', async () => {
+  const { vault } = await makeVault();
+  await vault.addReminder('call the dentist', { date: '2026-08-01' });
+
+  const [overdue] = vault.upcoming({ now: new Date(2026, 7, 6) });
+  assert.equal(overdue.days, -5);
+
+  assert.equal(vault.upcoming({ now: new Date(2026, 7, 9) }).length, 0, 'past the grace window');
+});
+
+test('completing something with no date is refused rather than done quietly', async () => {
+  const { vault } = await makeVault();
+  const log = await vault.add({ body: 'lunch was fine', kind: 'log' });
+  await vault.addFact('Emily likes chocolate');
+
+  await assert.rejects(() => vault.complete(log.id), /nothing to complete/);
+  await assert.rejects(() => vault.complete(vault.facts()[0].id), /not something you finish/);
+
+  // A dated note is fair game: it is a thing you meant to do, whoever made it.
+  const dated = await vault.add({ body: 'Lease renewal', kind: 'note', extra: { date: '2027-03-01' } });
+  assert.equal((await vault.complete(dated.id)).extra.status, 'done');
+});
+
 test('stats count what is actually there', async () => {
   const { vault } = await makeVault();
   await vault.add({ body: 'one two three #a', kind: 'log' });

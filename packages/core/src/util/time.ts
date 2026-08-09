@@ -88,6 +88,23 @@ const RELATIVE_STEPS: Array<[limit: number, div: number, unit: string]> = [
   [31_536_000_000, 2_592_000_000, 'mo'],
 ];
 
+/**
+ * How far off a dated thing is, in words. One definition, because the brief,
+ * the context dump, and the bare `ppr` overview all say it and had begun to
+ * say it differently.
+ *
+ * Negative days are already past — which only a reminder can be, since a fact
+ * whose date has gone simply stops being upcoming.
+ */
+export const countdown = (days: number): string =>
+  days < 0
+    ? `${-days} ${days === -1 ? 'day' : 'days'} overdue`
+    : days === 0
+      ? 'today'
+      : days === 1
+        ? 'tomorrow'
+        : `in ${days} days`;
+
 /** Compact age, e.g. `3m`, `2h`, `5d`, `now`. */
 export function relativeAge(d: Date, now: Date = new Date()): string {
   const diff = now.getTime() - d.getTime();

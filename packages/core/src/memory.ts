@@ -46,17 +46,21 @@ export type FactStatus = 'current' | 'retired';
  */
 export type FactRecurrence = 'yearly';
 
-/** A memory entry with the frontmatter ppr writes on facts read back typed. */
-export interface Fact {
+/**
+ * Everything the calendar half needs from anything that carries a date.
+ *
+ * Deliberately not "a fact". A fact is one of these, a reminder is another,
+ * and so is a hand-written note that happens to have `date:` in its
+ * frontmatter — dated anything is the rule, and it is a feature rather than a
+ * leak. The alternative is a second countdown for reminders that drifts from
+ * the first within a release.
+ */
+export interface DatedItem {
   id: string;
-  /** The fact itself, as one line. */
+  /** One line saying what it is. */
   text: string;
-  /** Entries it was extracted from, oldest first. Empty when hand-written. */
-  from: string[];
-  origin: FactOrigin;
-  status: FactStatus;
   /**
-   * The calendar date this fact carries, `YYYY-MM-DD`, when it has one.
+   * The calendar date this carries, `YYYY-MM-DD`, when it has one.
    *
    * This is the one piece of structure the layer adds, and it earns its place
    * by making the forward-looking half work with no model at all: "Emily's
@@ -65,11 +69,24 @@ export interface Fact {
    */
   date?: string;
   recurs?: FactRecurrence;
+  /**
+   * Entries it was drawn from. They are its sources, so they are never also
+   * news about it.
+   */
+  from: string[];
+  entry: Entry;
+}
+
+/** A memory entry with the frontmatter ppr writes on facts read back typed. */
+export interface Fact extends DatedItem {
+  /** Entries it was extracted from, oldest first. Empty when hand-written. */
+  from: string[];
+  origin: FactOrigin;
+  status: FactStatus;
   /** Ids of facts this one disagrees with, pending a decision by the user. */
   conflicts: string[];
   /** Set on a retired fact: the fact that replaced it. */
   supersededBy?: string;
-  entry: Entry;
 }
 
 const asIdList = (v: unknown): string[] => {
@@ -105,6 +122,34 @@ export function toFact(entry: Entry): Fact {
   if (date) fact.date = date;
   if (date && entry.extra.recurs === 'yearly') fact.recurs = 'yearly';
   return fact;
+}
+
+/**
+ * A timeline entry read as a dated thing, or nothing if it is not one.
+ *
+ * Any entry qualifies — a reminder, or a note somebody typed `date: 2027-03-01`
+ * into by hand. That is deliberate: `date:` in frontmatter is the whole
+ * interface, so a file written in vim reaches `ppr brief` without ppr having
+ * invented a second way to say the same thing.
+ *
+ * `status` is how a dated thing leaves the queue. `done` is what `ppr done`
+ * writes; `retired` is the fact store's word for the same idea, and both mean
+ * "stop telling me about this".
+ */
+export function toDated(entry: Entry): DatedItem | null {
+  const date = parseFactDate(entry.extra.date);
+  if (!date) return null;
+  if (entry.extra.status === 'done' || entry.extra.status === 'retired') return null;
+  return {
+    id: entry.id,
+    // The title, not the body: a reminder's title *is* its text, and a
+    // hand-dated note's title is the one line worth putting in a brief.
+    text: entry.title,
+    date,
+    ...(entry.extra.recurs === 'yearly' ? { recurs: 'yearly' as const } : {}),
+    from: [],
+    entry,
+  };
 }
 
 /**
@@ -199,32 +244,42 @@ const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\
  * counting as a mention of a birthday, because "redis" contains "is" — which
  * is the sort of thing that makes a daily brief unreadable within a week.
  */
-export function mentionScore(text: string, fact: Fact): number {
+export function mentionScore(text: string, item: DatedItem): number {
   const haystack = text.toLowerCase();
-  return factTerms(fact.text).filter((term) =>
+  return factTerms(item.text).filter((term) =>
     new RegExp(`\\b${escapeRegExp(term)}\\b`).test(haystack),
   ).length;
 }
 
 export interface Occurrence {
-  fact: Fact;
+  item: DatedItem;
   /** Local midnight on the day it next falls. */
   date: Date;
-  /** Whole days from today. 0 is today. */
+  /** Whole days from today. 0 is today, negative is overdue. */
   days: number;
   /** How many times it has come round before, for "her 24th". */
   ordinal?: number;
 }
 
 /**
- * When a dated fact next comes round, or nothing if it is simply past.
+ * When a dated thing next comes round, or nothing if it is simply past.
  *
  * Pure and offline — this is what lets `ppr brief` work with `ai.provider:
  * none`, and what keeps the model's job to phrasing rather than arithmetic.
+ *
+ * `graceDays` keeps a date that has already gone by in view, with `days`
+ * negative. A fact's date passing means the day happened and there is nothing
+ * to say; an intention's passing means it did *not* happen, which is exactly
+ * the moment you want telling — so the callers that hold intentions pass a
+ * window and the fact store does not.
  */
-export function nextOccurrence(fact: Fact, now: Date): Occurrence | null {
-  if (!fact.date) return null;
-  const [year, month, day] = fact.date.split('-').map(Number) as [number, number, number];
+export function nextOccurrence(
+  item: DatedItem,
+  now: Date,
+  opts: { graceDays?: number } = {},
+): Occurrence | null {
+  if (!item.date) return null;
+  const [year, month, day] = item.date.split('-').map(Number) as [number, number, number];
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const on = (y: number): Date => {
@@ -234,22 +289,20 @@ export function nextOccurrence(fact: Fact, now: Date): Occurrence | null {
   };
 
   let when: Date;
-  if (fact.recurs === 'yearly') {
+  if (item.recurs === 'yearly') {
     when = on(today.getFullYear());
     if (when < today) when = on(today.getFullYear() + 1);
   } else {
     when = on(year);
-    if (when < today) return null;
   }
 
-  const occurrence: Occurrence = {
-    fact,
-    date: when,
-    days: Math.round((when.getTime() - today.getTime()) / 86_400_000),
-  };
+  const days = Math.round((when.getTime() - today.getTime()) / 86_400_000);
+  if (days < -(opts.graceDays ?? 0)) return null;
+
+  const occurrence: Occurrence = { item, date: when, days };
   // `0000` is how an unknown year is recorded — a birthday with no birth year
   // still recurs, it just cannot say which one this will be.
-  if (fact.recurs === 'yearly' && year >= 1000 && when.getFullYear() > year) {
+  if (item.recurs === 'yearly' && year >= 1000 && when.getFullYear() > year) {
     occurrence.ordinal = when.getFullYear() - year;
   }
   return occurrence;

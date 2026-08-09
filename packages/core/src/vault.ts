@@ -2,6 +2,7 @@ import type { Clock, AIProvider, Fetcher, Storage, Transcriber, AudioInput } fro
 import type { Config } from './config.js';
 import {
   MEMORY_KIND,
+  REMINDER_KIND,
   type Entry,
   type EntryInput,
   type EntryPatch,
@@ -20,13 +21,18 @@ import {
   FACT_KEYS,
   mentionScore,
   nextOccurrence,
+  parseFactDate,
   parseState,
+  toDated,
   toFact,
   STATE_PATH,
+  type DatedItem,
   type Fact,
+  type FactRecurrence,
   type Occurrence,
   type VaultState,
 } from './memory.js';
+import { REMINDER_KEYS, reminderExtra } from './remind.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
@@ -62,14 +68,25 @@ export interface LearnResult {
 export interface VaultContext {
   query?: string;
   facts: Fact[];
-  upcoming: UpcomingFact[];
+  upcoming: Upcoming[];
   entries: Entry[];
 }
 
-export interface UpcomingFact extends Occurrence {
+export interface Upcoming extends Occurrence {
   /** Entries that have touched this since it last came round. */
   mentions: Entry[];
 }
+
+/**
+ * How long an intention stays visible after its day has gone.
+ *
+ * A reminder nobody completed is the one dated thing whose *past* matters: the
+ * dentist did not call themselves. Surfacing it forever would turn `ppr brief`
+ * into a guilt list, and hiding it the next morning would make the whole
+ * feature untrustworthy — a week is long enough to notice and short enough to
+ * stay a heads-up.
+ */
+const OVERDUE_GRACE_DAYS = 7;
 
 /** How many known facts a reconcile prompt carries. One-liners are cheap. */
 const FACTS_IN_PROMPT = 150;
@@ -281,6 +298,75 @@ export class Vault {
     return searchEntries(scope, query, { ...(limit ? { limit } : {}), now: this.clock.now() });
   }
 
+  // -------------------------------------------------------------- reminders
+
+  /**
+   * Records something to be reminded about. An ordinary entry with a date on
+   * it, so `ppr ls` shows it the day you wrote it and `ppr brief` counts down.
+   */
+  async addReminder(
+    text: string,
+    when: { date: string; recurs?: FactRecurrence },
+  ): Promise<Entry> {
+    const line = text.trim();
+    if (!line) throw new PprError('EINVALID', 'Nothing to be reminded about');
+    const date = parseFactDate(when.date);
+    if (!date) throw new PprError('EINVALID', `Not a calendar day: ${when.date}`);
+    return this.add({
+      body: line,
+      kind: REMINDER_KIND,
+      title: truncate(line, 70),
+      extra: reminderExtra({ date, ...(when.recurs ? { recurs: when.recurs } : {}) }),
+    });
+  }
+
+  /**
+   * Marks a dated thing dealt with, so it stops surfacing.
+   *
+   * Anything with a date can be completed, not only a reminder — a hand-dated
+   * note is a thing you meant to do just as much. What is refused is an entry
+   * with no date at all, because there is nothing to stop showing and the ref
+   * was almost certainly mistyped: turning that into a silent no-op would mean
+   * `ppr done` sometimes lying about what it did.
+   */
+  async complete(ref: string): Promise<Entry> {
+    const entry = this.catalog.resolve(ref);
+    if (entry.kind === MEMORY_KIND) {
+      throw new PprError(
+        'EINVALID',
+        `${entry.title} is a fact, and a fact is not something you finish`,
+        'Facts are retired by `ppr memory review`, or by editing the file.',
+      );
+    }
+    const date = parseFactDate(entry.extra.date);
+    if (!date && entry.kind !== REMINDER_KIND) {
+      throw new PprError(
+        'EINVALID',
+        `${entry.title} is a ${entry.kind} with no date — there is nothing to complete`,
+        'Did you mean a different entry? `ppr remind <when> <text>` makes one that can be done.',
+      );
+    }
+    return this.update(
+      entry.id,
+      this.reminderPatch({
+        ...(date ? { date } : {}),
+        ...(entry.extra.recurs === 'yearly' ? { recurs: 'yearly' as const } : {}),
+        status: 'done',
+      }),
+    );
+  }
+
+  /**
+   * A patch that makes the reminder fields say exactly what is passed, rather
+   * than merging over what was there — the same reason `factPatch` exists:
+   * without it there is no way to clear one.
+   */
+  private reminderPatch(fields: Parameters<typeof reminderExtra>[0]): EntryPatch {
+    const cleared: Record<string, unknown> = {};
+    for (const key of REMINDER_KEYS) cleared[key] = undefined;
+    return { extra: { ...cleared, ...reminderExtra(fields) } };
+  }
+
   // ------------------------------------------------------------------ graph
 
   tags() {
@@ -376,16 +462,16 @@ export class Vault {
    */
   async brief(
     opts: { withinDays?: number; signal?: AbortSignal } = {},
-  ): Promise<{ text: string; ai: boolean; items: UpcomingFact[] }> {
+  ): Promise<{ text: string; ai: boolean; items: Upcoming[] }> {
     const items = this.upcoming(opts.withinDays !== undefined ? { withinDays: opts.withinDays } : {});
     const result = await tasks.brief(
       items.map((item) => ({
-        text: item.fact.text,
+        text: item.item.text,
         days: item.days,
         when: formatDay(item.date),
         ...(item.ordinal ? { ordinal: item.ordinal } : {}),
         mentions: item.mentions.map((e) => e.title),
-        related: this.relatedFacts(item.fact).map((f) => f.text),
+        related: this.relatedFacts(item.item).map((f) => f.text),
       })),
       { provider: this.provider, ...(opts.signal ? { signal: opts.signal } : {}) },
     );
@@ -393,10 +479,10 @@ export class Vault {
   }
 
   /** Other facts that look like they are about the same subject. */
-  private relatedFacts(fact: Fact, limit = 4): Fact[] {
-    const others = this.facts().filter((f) => f.id !== fact.id);
+  private relatedFacts(item: DatedItem, limit = 4): Fact[] {
+    const others = this.facts().filter((f) => f.id !== item.id);
     if (!others.length) return [];
-    return searchEntries(others.map((f) => f.entry), fact.text, { limit, now: this.clock.now() })
+    return searchEntries(others.map((f) => f.entry), item.text, { limit, now: this.clock.now() })
       .map((hit) => toFact(hit.entry));
   }
 
@@ -474,21 +560,44 @@ export class Vault {
   }
 
   /**
-   * Dated facts falling inside a window, soonest first. No model involved.
+   * Everything dated that falls inside a window, soonest first. No model
+   * involved.
+   *
+   * Dated *anything*, not dated facts: a standing fact with a birthday on it,
+   * a reminder, and a note somebody typed `date: 2027-03-01` into by hand all
+   * arrive here, because `date:` in frontmatter is the whole interface and a
+   * second countdown for reminders would have drifted from this one inside a
+   * release. Anything marked done or retired never surfaces.
    *
    * Each carries what the journal has said about it since it last came round,
    * because "her birthday is in two weeks" and "her birthday is in two weeks
    * and you have not mentioned a present" are different notifications, and
    * only the second is worth being interrupted by.
    */
-  upcoming(opts: { withinDays?: number; now?: Date } = {}): UpcomingFact[] {
+  upcoming(opts: { withinDays?: number; now?: Date } = {}): Upcoming[] {
     const now = opts.now ?? this.clock.now();
     const within = opts.withinDays ?? 30;
+    const found: Occurrence[] = [];
 
-    return this.facts()
-      .map((fact) => nextOccurrence(fact, now))
-      .filter((o): o is Occurrence => o !== null && o.days <= within)
-      .sort((a, b) => a.days - b.days)
+    // A fact's date passing means the day happened, so it drops out of view.
+    for (const fact of this.facts()) {
+      const occurrence = nextOccurrence(fact, now);
+      if (occurrence) found.push(occurrence);
+    }
+    // An intention's date passing means it did *not* happen, so it stays for a
+    // week, marked overdue by a negative `days`.
+    for (const entry of this.catalog.timeline()) {
+      const item = toDated(entry);
+      if (!item) continue;
+      const occurrence = nextOccurrence(item, now, { graceDays: OVERDUE_GRACE_DAYS });
+      if (occurrence) found.push(occurrence);
+    }
+
+    return found
+      .filter((o) => o.days <= within)
+      // Overdue first, then today, then the rest. Ties break on id so two
+      // things due the same day come out in the same order every run.
+      .sort((a, b) => a.days - b.days || (a.item.id < b.item.id ? -1 : 1))
       .map((occurrence) => ({ ...occurrence, mentions: this.mentionsSince(occurrence) }));
   }
 
@@ -502,13 +611,15 @@ export class Vault {
    */
   private mentionsSince(occurrence: Occurrence): Entry[] {
     const since = new Date(occurrence.date);
-    since.setFullYear(since.getFullYear() - (occurrence.fact.recurs === 'yearly' ? 1 : 5));
-    const needed = Math.min(2, factTerms(occurrence.fact.text).length);
+    since.setFullYear(since.getFullYear() - (occurrence.item.recurs === 'yearly' ? 1 : 5));
+    const needed = Math.min(2, factTerms(occurrence.item.text).length);
     if (!needed) return [];
 
     return filterEntries(this.catalog.timeline(), { since })
-      .filter((entry) => !occurrence.fact.from.includes(entry.id))
-      .map((entry) => ({ entry, score: mentionScore(`${entry.title} ${entry.body}`, occurrence.fact) }))
+      // A reminder is not news about itself, and a fact's sources are not news
+      // about the fact.
+      .filter((entry) => entry.id !== occurrence.item.id && !occurrence.item.from.includes(entry.id))
+      .map((entry) => ({ entry, score: mentionScore(`${entry.title} ${entry.body}`, occurrence.item) }))
       .filter((hit) => hit.score >= needed)
       .sort((a, b) => b.score - a.score)
       .slice(0, 3)

@@ -1,5 +1,5 @@
 import type { Vault } from '@ppr/core';
-import { formatTime, MEMORY_KIND, truncate } from '@ppr/core';
+import { countdown, formatTime, MEMORY_KIND, truncate } from '@ppr/core';
 import { color, out, table } from './render.js';
 
 /**
@@ -24,7 +24,9 @@ export function overview(vault: Vault): void {
   // journal, and a count that silently folds in the fact store would not add
   // up against the number printed next to it.
   const written = stats.entries - (stats.byKind[MEMORY_KIND] ?? 0);
-  const soonest = facts ? vault.upcoming({ withinDays: 30 })[0] : undefined;
+  // Not gated on there being facts: a reminder is upcoming too, and a vault
+  // can hold one without a fact store at all.
+  const soonest = vault.upcoming({ withinDays: 30 })[0];
 
   if (!stats.entries) {
     out(color.bold('ppr') + color.dim(`  ${vault.root}`));
@@ -61,7 +63,7 @@ export function overview(vault: Vault): void {
   // is a reason to run it.
   if (soonest) {
     out('');
-    out(`  ${truncate(soonest.fact.text, 58)} ${color.dim(`— ${countdown(soonest.days)}`)}`);
+    out(`  ${truncate(soonest.item.text, 58)} ${color.dim(`— ${countdown(soonest.days)}`)}`);
   }
 
   out('');
@@ -76,9 +78,6 @@ export function overview(vault: Vault): void {
     ]),
   );
 }
-
-const countdown = (days: number): string =>
-  days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
 
 const startOfToday = (now: Date): Date =>
   new Date(now.getFullYear(), now.getMonth(), now.getDate());

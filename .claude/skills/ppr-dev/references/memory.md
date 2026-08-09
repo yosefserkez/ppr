@@ -16,6 +16,7 @@ fit in a prompt. The intelligence is spent writing the store, not searching it.
 | If it is... | It goes in... |
 | --- | --- |
 | The shape of a fact: fields, paths, provenance, dates, recurrence | `core/src/memory.ts` |
+| The shape of a reminder, or reading a date out of typed words | `core/src/remind.ts` |
 | A prompt, or parsing what a model answered with | `core/src/ai/tasks.ts` |
 | Which entries a run reads, chunking, reconciling, the high-water mark | `Vault.learn()` / `Vault.absorb()` in `core/src/vault.ts` |
 | How a fact looks, or its `--json` shape | `cli/src/commands/think.ts` |
@@ -24,6 +25,32 @@ fit in a prompt. The intelligence is spent writing the store, not searching it.
 `memory/<slug>-xxxx.md` is flat and undated: a fact is about a thing, not a day.
 Everything ppr adds rides in `Entry.extra`, which round-trips for free (I3), so
 the layer owns no new frontmatter keys and a fact stays readable in Obsidian.
+
+## The reminder shape
+
+A reminder is the mirror image of a fact and lives in the opposite place:
+
+```yaml
+kind: reminder            # an ordinary entry, in entries/YYYY/MM/, in `ppr ls`
+date: 2026-08-10          # extra; parsed by parseFactDate, same as a fact's
+recurs: yearly            # extra; only ever yearly, same stance as a fact's
+status: done              # extra; written by `ppr done`, and nothing else
+```
+
+You *did* say "remind me to call the dentist" at the moment you said it, so a
+reminder is an event with a date attached, not state — I12 is untouched and
+`filterEntries()` does not special-case it.
+
+`Vault.upcoming()` is therefore about **dated anything**, not dated facts:
+`toFact` and `toDated` both produce a `DatedItem`, and a note somebody typed
+`date:` into by hand surfaces in `ppr brief` with no ppr command involved. That
+is the feature. The asymmetry to keep: a fact whose date passed drops out (the
+day happened), an unfinished timeline item stays for seven days with negative
+`days` (it did not happen, which is the point of telling you).
+
+Adding a reminder field is the same four edits as a fact's, against
+`reminderExtra()` / `REMINDER_KEYS` / `toDated()` / the `--json` shape in
+`commands/think.ts`.
 
 ## The rules that are not negotiable
 

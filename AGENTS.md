@@ -230,6 +230,8 @@ model, so it is instant and identical every time.
 | --- | --- |
 | A rule about entries, search, links, or the graph | `packages/core/src/` |
 | Anything about facts: shape, paths, provenance, state | `core/src/memory.ts` |
+| Anything dated: the shared shape, occurrences, overdue | `core/src/memory.ts` |
+| Reminders: their frontmatter, and reading a date out of words | `core/src/remind.ts` |
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
@@ -274,6 +276,24 @@ the only structure the layer adds, and they earn it: they make `ppr brief` and
 `ppr context` arithmetic rather than a judgement, so the forward-looking half
 runs offline and identically every time. `recurs` is deliberately not a
 scheduling language — a tool that grows RRULEs has become a calendar.
+
+**Reminder.** A `kind: reminder` entry: a future intention, carrying the same
+`date`/`recurs` in `extra` plus `status: done` once it is dealt with. It is the
+opposite of a fact in the way that decides where it lives — you *did* say
+"remind me to call the dentist" at the moment you said it, so a reminder is in
+`entries/`, in the timeline, and in `ppr ls`. I12 is about state; an intention
+is not state, it is an event that has a date attached to it.
+
+**Dated anything.** `Vault.upcoming()` is about things with a `date`, not about
+facts: a dated fact, a reminder, and a note somebody typed `date: 2027-03-01`
+into by hand all arrive in `ppr brief` through one piece of arithmetic. The
+hand-written case is a feature, not a leak — `date:` in frontmatter is the whole
+interface, so a file written in vim reaches the brief with no ppr command
+involved. `DatedItem` in `memory.ts` is the shared shape; `toFact` and `toDated`
+are the two ways in. The one asymmetry is deliberate: a *fact* whose date has
+passed drops out (the day happened), while an unfinished *timeline* item stays
+for a seven-day grace window with negative `days`, because a missed intention is
+exactly the thing worth being told about.
 
 The store is a **projection**: delete `memory/` and `ppr memory learn --all`
 rebuilds it. That is the property to protect when changing anything here — it

@@ -7,6 +7,8 @@ import {
   mentionScore,
   nextOccurrence,
   parseFactDate,
+  reminderExtra,
+  toDated,
   toFact,
 } from '../dist/index.js';
 
@@ -75,6 +77,48 @@ test('terms too ordinary to identify a fact are not terms', () => {
   assert.deepEqual(factTerms('The user likes chocolate'), ['chocolate']);
   // The possessive is stripped, so "got Emily a present" still counts.
   assert.deepEqual(factTerms("Emily's birthday is 20 October"), ['emily', 'birthday', 'october']);
+});
+
+test('anything in the timeline with a date is a dated thing', () => {
+  const reminder = createEntry({
+    body: 'call the dentist',
+    kind: 'reminder',
+    title: 'call the dentist',
+    extra: reminderExtra({ date: '2026-08-10' }),
+  });
+  const item = toDated(reminder);
+  assert.equal(item.date, '2026-08-10');
+  assert.equal(item.text, 'call the dentist');
+  assert.deepEqual(item.from, [], 'a reminder has no sources to exclude');
+
+  // A note somebody typed `date:` into by hand is the same thing, on purpose.
+  const handWritten = createEntry({ body: 'Lease renewal', kind: 'note', extra: { date: '2027-03-01' } });
+  assert.equal(toDated(handWritten).date, '2027-03-01');
+
+  // Undated, done, and retired are all "nothing to count down to".
+  assert.equal(toDated(createEntry({ body: 'lunch was fine', kind: 'log' })), null);
+  assert.equal(toDated(createEntry({ body: 'x', extra: { date: '2026-08-10', status: 'done' } })), null);
+  assert.equal(toDated(createEntry({ body: 'x', extra: { date: '2026-08-10', status: 'retired' } })), null);
+  assert.equal(toDated(createEntry({ body: 'x', extra: { date: 'someday' } })), null);
+});
+
+test('a missed intention stays visible for a grace window, and a fact does not', () => {
+  const item = toDated(
+    createEntry({ body: 'call the dentist', kind: 'reminder', extra: reminderExtra({ date: '2026-08-01' }) }),
+  );
+
+  // Without a window a past date is simply gone — what `ppr brief` has always
+  // done with a fact whose day went by.
+  assert.equal(nextOccurrence(item, new Date(2026, 7, 8)), null);
+
+  const overdue = nextOccurrence(item, new Date(2026, 7, 8), { graceDays: 7 });
+  assert.equal(overdue.days, -7, 'negative days is how overdue is said');
+  assert.equal(overdue.date.getDate(), 1);
+
+  // One day past the window and it stops asking.
+  assert.equal(nextOccurrence(item, new Date(2026, 7, 9), { graceDays: 7 }), null);
+  // The day itself is not overdue.
+  assert.equal(nextOccurrence(item, new Date(2026, 7, 1), { graceDays: 7 }).days, 0);
 });
 
 test('a birthday with no known year recurs but claims no ordinal', () => {

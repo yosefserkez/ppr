@@ -1,5 +1,5 @@
 import type { Entry } from '../types.js';
-import { dayKey, formatDay } from '../util/time.js';
+import { countdown, dayKey, formatDay } from '../util/time.js';
 import { extractTags, plainText, titleFromBody, truncate } from '../util/text.js';
 
 /**
@@ -100,10 +100,8 @@ export function heuristicBrief(
 ): string {
   return items
     .map((item) => {
-      const when =
-        item.days === 0 ? 'today' : item.days === 1 ? 'tomorrow' : `in ${item.days} days`;
       const quiet = item.mentions.length ? '' : '\n  nothing logged about it';
-      return `${item.text}\n  ${item.when} — ${when}${quiet}`;
+      return `${item.text}\n  ${item.when} — ${countdown(item.days)}${quiet}`;
     })
     .join('\n\n');
 }

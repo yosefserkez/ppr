@@ -4,7 +4,7 @@
  */
 
 /** Well-known entry kinds. Any string is allowed; these are the ones ppr ships with. */
-export const KINDS = ['log', 'note', 'dump', 'clip', 'voice', 'memory'] as const;
+export const KINDS = ['log', 'note', 'dump', 'clip', 'voice', 'memory', 'reminder'] as const;
 export type Kind = (typeof KINDS)[number] | (string & {});
 
 /**
@@ -18,6 +18,19 @@ export type Kind = (typeof KINDS)[number] | (string & {});
  * re-read its own output until every run said "nothing durable in there".
  */
 export const MEMORY_KIND = 'memory';
+
+/**
+ * A future intention, and the one kind that *completes*.
+ *
+ * The opposite of a memory in every way that matters: you did say "remind me
+ * to call the dentist" at the moment you said it, so a reminder belongs to its
+ * day and stays in the timeline — `ppr ls` and `ppr today` show it like any
+ * other entry, and I12 is untouched. What makes it a reminder is that it
+ * carries `extra.date`, so `ppr brief` counts down to it, and `extra.status:
+ * done` once it is dealt with. Nothing about it is state: a memory is true
+ * until it stops being, a reminder is pending until it is done.
+ */
+export const REMINDER_KIND = 'reminder';
 
 /** A single markdown file in the vault, parsed. */
 export interface Entry {

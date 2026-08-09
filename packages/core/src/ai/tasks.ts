@@ -4,7 +4,7 @@ import { PprError } from '../errors.js';
 import { factKey, factText, parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
-import { formatDay } from '../util/time.js';
+import { countdown, formatDay } from '../util/time.js';
 import { asStringList, parseJsonLoose } from './json.js';
 import { GENERIC_FOLLOWUPS, heuristicBrief, heuristicDistill, heuristicRecap } from './fallback.js';
 
@@ -520,6 +520,8 @@ Write a short heads-up from facts that are about to come round.
 Rules:
 - One short line per item, in the order given. No preamble, no sign-off.
 - Say when it is, in days or weeks. The number of days is given; use it.
+- An item marked overdue was meant to happen and did not. Say so plainly and
+  say how late it is. Never congratulate, never scold.
 - When nothing has been logged about an item, that is the point of mentioning
   it — say so plainly, and ask the one question worth asking.
 - Use what else is known about the person or thing when it is relevant to that
@@ -558,7 +560,7 @@ export async function brief(
       .map((item) =>
         [
           `- ${item.text}`,
-          `  when: ${item.when}, in ${item.days} ${item.days === 1 ? 'day' : 'days'}`,
+          `  when: ${item.when}, ${countdown(item.days)}`,
           item.ordinal ? `  this will be number ${item.ordinal}` : '',
           `  logged since last time: ${item.mentions.length ? item.mentions.join('; ') : 'nothing'}`,
           item.related.length ? `  also known: ${item.related.join('; ')}` : '',
