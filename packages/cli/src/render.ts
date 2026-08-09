@@ -61,6 +61,7 @@ const KIND_COLOR: Record<string, (s: string) => string> = {
   clip: c.yellow,
   voice: c.magenta,
   memory: c.yellow,
+  reminder: c.yellow,
 };
 
 const kindTag = (kind: string): string => (KIND_COLOR[kind] ?? c.dim)(kind.padEnd(6).slice(0, 6));

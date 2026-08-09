@@ -9,8 +9,10 @@ import { suggest } from './suggest.js';
 import {
   appendCommand,
   clipCommand,
+  doneCommand,
   dumpCommand,
   quickLog,
+  remindCommand,
   removeCommand,
   voiceCommand,
   writeCommand,
@@ -70,6 +72,8 @@ program.addCommand(dumpCommand());
 program.addCommand(clipCommand());
 program.addCommand(voiceCommand());
 program.addCommand(appendCommand());
+program.addCommand(remindCommand());
+program.addCommand(doneCommand());
 
 // Browse
 program.addCommand(listCommand());
@@ -170,6 +174,7 @@ Examples:
   ppr                                             what you wrote today
   ppr setup                                       guided setup, downloads included
   ppr "deploy failed again, rolled back to 4.2"   quick log (quoted = a note)
+  ppr remind tomorrow call the dentist            something to be reminded of
   cat notes.txt | ppr dump                        clean up a wall of text
   ppr clip https://example.com/post               save what a page says
   ppr ls                                          browse with the keyboard

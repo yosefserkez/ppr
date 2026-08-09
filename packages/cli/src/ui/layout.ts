@@ -21,6 +21,7 @@ const KIND_STYLE: Record<string, Style> = {
   clip: color.yellow,
   voice: color.magenta,
   memory: color.yellow,
+  reminder: color.yellow,
 };
 
 /**
@@ -31,7 +32,7 @@ const KIND_STYLE: Record<string, Style> = {
 function entryRow(entry: Entry, width: number, selected: boolean, now: Date): string {
   const segments: Segment[] = [
     [selected ? '▌ ' : '  ', selected ? color.cyan : undefined],
-    [entry.kind.padEnd(5).slice(0, 5), KIND_STYLE[entry.kind] ?? color.dim],
+    [entry.kind.padEnd(6).slice(0, 6), KIND_STYLE[entry.kind] ?? color.dim],
     ['  ', undefined],
     [relativeAge(new Date(entry.created), now).padStart(4), color.dim],
     ['  ', undefined],

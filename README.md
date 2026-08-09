@@ -82,6 +82,8 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | `ppr clip <url>`   | Fetches a page, extracts the content, saves what it says.         |
 | `ppr voice [file]` | Records, transcribes, distills.                                   |
 | `ppr append <ref>` | Keeps a thread going.                                             |
+| `ppr remind <when> <text>` | Something to be reminded of, on a day.                    |
+| `ppr done <ref>`   | That reminder is dealt with.                                      |
 
 
 `ppr dump` is the one to reach for when thoughts arrive faster than sentences. It
@@ -125,6 +127,32 @@ asking you anything. A one-liner saves and gets out of the way.
 Follow-up questions belong to `ppr write`, where you opened a prompt and are
 already in a writing session. Add `--ask` to invite one onto a one-liner, or
 `--no-follow` to refuse it anywhere.
+
+### Reminders
+
+```bash
+ppr remind tomorrow call the dentist
+ppr remind "next friday" review the roadmap
+ppr remind every year on 20 october call mum
+ppr remind pay the rent --at "in 3 days"
+ppr "remind me to call the dentist tomorrow"   # the same thing, quoted
+ppr done 6jc6ad                                # dealt with
+```
+
+A reminder is an ordinary entry with `date:` in its frontmatter, kept in the
+timeline where you wrote it — `ppr ls` shows it like anything else, and
+`ppr brief` counts down to it. The day is read out of your words; a model is
+only asked when no rule can find one, and never gets to overrule a date that is
+plainly there.
+
+**A line with no readable date is kept as a log, and says so.** A reminder
+without a day would never surface anywhere, which is the quietest possible way
+to lose something — so the words go in as an ordinary entry and stderr names the
+explicit form.
+
+`ppr done` writes `status: done` and changes nothing else; the file stays.
+An unfinished reminder shows up as overdue for a week after its day, then stops
+asking — a brief that never forgets is a guilt list rather than a heads-up.
 
 ### Composing with `ppr write`
 
@@ -268,15 +296,25 @@ would have matched a fact says so.
 
 ### What is coming up
 
-`ppr brief` is the forward-looking half: facts carrying a date, counted down.
+`ppr brief` is the forward-looking half: **anything carrying a date**, counted
+down. A birthday ppr learned, a reminder you set, and a note you typed
+`date: 2027-03-01` into by hand all arrive the same way.
 
 ```
 $ ppr brief
 Emily's birthday is on 20 October, 12 days away — nothing about a present yet.
+Call the dentist — 3 days overdue.
 ```
 
-Which facts are due is arithmetic, so `ppr brief --plain` works with no model
-configured at all. The model only writes the sentence.
+That last one is not an accident of the design, it *is* the design: `date:` in
+frontmatter is the whole interface, so a file written in vim reaches the brief
+with no ppr command involved. Which items are due is arithmetic, so
+`ppr brief --plain` works with no model configured at all. The model only writes
+the sentence.
+
+```bash
+ppr brief --json | jq '.[] | select(.overdue)'
+```
 
 ### Handing it to something else
 

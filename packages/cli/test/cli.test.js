@@ -34,6 +34,17 @@ function ppr(vault, args, { input, editor } = {}) {
   });
 }
 
+/**
+ * A calendar day N days from now, in *local* time — which is the only kind of
+ * day ppr has. `toISOString()` would name a different one either side of
+ * midnight UTC, and the count of days would be off by one for half the world.
+ */
+function dayFromNow(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 async function withVault(fn) {
   const dir = await mkdtemp(join(tmpdir(), 'ppr-test-'));
   try {
@@ -718,6 +729,125 @@ test('the quoted and + capture paths produce identical entries', async () => {
       assert.equal(second[field], first[field], `${field} differs between the two paths`);
     }
     assert.deepEqual(second.tags, first.tags);
+  });
+});
+
+test('a reminder is an entry with a day on it, and it is in the timeline', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    assert.equal(code, 0);
+    assert.match(stderr, /call the dentist/);
+
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.kind, 'reminder');
+    assert.equal(entry.title, 'call the dentist', 'the day is not part of what you wrote');
+    assert.match(entry.path, /^entries\//, 'you did say it, so it belongs to the day you said it');
+
+    const [item] = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(item.days, 1);
+    assert.equal(item.kind, 'reminder');
+    assert.equal(item.overdue, false);
+    assert.match(item.date, /^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+test('the quoted and the explicit ways to set a reminder are one path', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    await ppr(dir, ['remind me to call the dentist tomorrow']);
+
+    const [second, first] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    for (const field of ['kind', 'title']) {
+      assert.equal(second[field], first[field], `${field} differs between the two paths`);
+    }
+    const brief = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(brief.length, 2);
+    assert.deepEqual([...new Set(brief.map((i) => i.days))], [1], 'both land on the same day');
+  });
+});
+
+test('a reminder with no readable date is logged, and says so', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['remind me about the passport thing']);
+    // Exit 0: nothing failed. The words are on disk either way (I2).
+    assert.equal(code, 0);
+    assert.match(stderr, /No date in that — logged it instead/);
+    assert.match(stderr, /ppr remind tomorrow/, 'and the way to do it explicitly');
+
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.kind, 'log', 'a reminder with no day would never surface at all');
+    assert.match(entry.title, /passport thing/);
+    assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 0);
+
+    // A day the user typed out is a different matter: that is an error.
+    const bad = await ppr(dir, ['remind', 'call the dentist', '--at', 'whenever']);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /Could not understand --at/);
+  });
+});
+
+test('done stops a reminder coming up, and leaves the file where it was', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+
+    const done = await ppr(dir, ['done', entry.id]);
+    assert.equal(done.code, 0);
+    assert.match(done.stderr, /file stays/);
+
+    assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 0);
+    const raw = await readFile(join(dir, entry.path), 'utf8');
+    assert.match(raw, /status: done/);
+    assert.match(raw, /call the dentist/);
+    // Still an entry: `ppr ls` is a record of what you wrote, not a queue.
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 1);
+
+    // A log has nothing to complete, and a mistyped ref must not look like one.
+    await ppr(dir, ['+', 'lunch was fine']);
+    const refused = await ppr(dir, ['done', 'lunch']);
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, /nothing to complete/);
+  });
+});
+
+test('a reminder nobody finished is shown as overdue, not hidden', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+
+    // Move its day into the past by hand — which is also the point: the date
+    // is one line of frontmatter, editable like everything else.
+    const path = join(dir, entry.path);
+    const raw = await readFile(path, 'utf8');
+    const past = dayFromNow(-3);
+    await writeFile(path, raw.replace(/^date: .*$/m, `date: ${past}`));
+
+    const [item] = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(item.days, -3);
+    assert.equal(item.overdue, true);
+    assert.match((await ppr(dir, ['brief', '--plain'])).stdout, /3 days overdue/);
+    assert.match((await ppr(dir, ['context'])).stdout, /3 days overdue/);
+
+    // A fortnight late and it stops asking; a brief that never forgets is a
+    // guilt list, not a heads-up.
+    const older = dayFromNow(-14);
+    await writeFile(path, raw.replace(/^date: .*$/m, `date: ${older}`));
+    assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 0);
+  });
+});
+
+test('a date typed into any file by hand reaches the brief', async () => {
+  await withVault(async (dir) => {
+    const soon = dayFromNow(5);
+    await writeFile(
+      join(dir, 'entries', 'lease.md'),
+      `---\ntitle: Lease renewal\nkind: note\ndate: ${soon}\n---\n\nThe landlord wants an answer.\n`,
+    );
+
+    const [item] = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(item.text, 'Lease renewal');
+    assert.equal(item.kind, 'note', 'no ppr command was involved in making this');
+    assert.equal(item.days, 5);
   });
 });
 

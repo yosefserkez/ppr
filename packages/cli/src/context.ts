@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { type Vault, type ListQuery, parseWhen, PprError } from '@ppr/core';
+import { type Vault, type ListQuery, asDay, futureWhen, parseWhen, PprError } from '@ppr/core';
 import { openVault } from '@ppr/core/node';
 import { setColor } from './render.js';
 
@@ -130,13 +130,34 @@ export function toQuery(flags: FilterFlags, fallbackLimit: number, now: Date): L
   return query;
 }
 
+/**
+ * A calendar day from a flag someone typed, or an error naming what works.
+ *
+ * Forward-looking, unlike `--since`: every flag that reaches here is about
+ * something still to come. A flag the user spelled out is refused rather than
+ * fallen back on — they said which day they meant, and quietly storing a
+ * different one, or none, is worse than saying it was not understood.
+ */
+export function dayFlag(flag: string, value: string, now: Date): string {
+  const when = futureWhen(value, now);
+  const day = when && asDay(when);
+  if (!day) {
+    throw new PprError(
+      'EINVALID',
+      `Could not understand ${flag} "${value}"`,
+      'Try: tomorrow, friday, in 3 days, 20 october, 2026-10-20',
+    );
+  }
+  return day;
+}
+
 /** Attaches the filter flag set to a command. One definition, used everywhere. */
 export function filterFlags(cmd: Command): Command {
   return cmd
     .option('-s, --since <when>', 'only entries after this point (7d, today, 2026-07-01)')
     .option('-u, --until <when>', 'only entries before this point')
     .option('-t, --tag <tag...>', 'filter by tag (repeatable, AND)')
-    .option('-k, --kind <kind...>', 'filter by kind: log, note, dump, clip, voice, memory')
+    .option('-k, --kind <kind...>', 'filter by kind: log, note, dump, clip, voice, reminder, memory')
     .option('-n, --limit <n>', 'maximum entries')
     .option('-a, --all', 'no limit')
     .option('--pinned', 'only pinned entries')

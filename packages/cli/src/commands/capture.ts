@@ -2,10 +2,10 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Entry, type Vault, PprError } from '@ppr/core';
+import { type Entry, type Vault, parseReminder, truncate, PprError } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
-import { globals, withVault } from '../context.js';
-import { confirm, editorName, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
+import { dayFlag, globals, withVault } from '../context.js';
+import { confirm, editorName, hasStdin, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
 
 interface CaptureFlags {
@@ -147,8 +147,121 @@ export async function quickLog(
   body: string,
   opts: { kind?: string } = {},
 ): Promise<Entry> {
+  if (!opts.kind && REMIND_PREFIX.test(body)) return remind(vault, cmd, body);
   const entry = await vault.add({ body, kind: opts.kind ?? vault.config.capture.defaultKind });
   return finish(vault, entry, cmd, { follow: false });
+}
+
+/**
+ * The one thing a quick capture is allowed to become other than a log.
+ *
+ * A fixed prefix, never a judgement about what the text is about. "remind me"
+ * is a sentence nobody writes by accident and nobody writes meaning anything
+ * else — which is the only kind of signal that may change what a command does
+ * (L17/I11). Everything past those two words is still just words.
+ */
+const REMIND_PREFIX = /^remind(\s+me)?\b/i;
+
+/**
+ * `ppr remind` — a thing to do, on a day.
+ *
+ * The single implementation, so `ppr remind tomorrow call the dentist` and
+ * `ppr "remind me tomorrow to call the dentist"` cannot answer differently
+ * (L18). Both are the same act, and one of them being a little more explicit
+ * about it is not a reason for a second code path.
+ */
+export async function remind(
+  vault: Vault,
+  cmd: Command,
+  body: string,
+  flags: { at?: string; print?: boolean } = {},
+): Promise<Entry> {
+  const now = vault.now();
+  // `--at` was typed on purpose, so it wins and a bad value is an error rather
+  // than a fallback. Without it the words are read, and only then a model.
+  const stated = flags.at ? dayFlag('--at', flags.at, now) : undefined;
+  const parsed = stated ? parseReminder(body, now) : await vault.reminderFrom(body);
+  const text = parsed.text || body;
+  const date = stated ?? parsed.date;
+
+  if (!date) {
+    // A reminder with no day never surfaces anywhere, which is the quietest
+    // possible way to lose something. The words are kept as an ordinary log
+    // and the difference is said out loud (I2).
+    errline(
+      color.yellow('No date in that — logged it instead.') +
+        color.dim(`\n  To set one:  ppr remind tomorrow ${truncate(text, 40)}`),
+    );
+    const logged = await vault.add({ body: text, kind: vault.config.capture.defaultKind });
+    return finish(vault, logged, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+  }
+
+  const entry = await vault.addReminder(text, {
+    date,
+    ...(parsed.recurs ? { recurs: parsed.recurs } : {}),
+  });
+  return finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+}
+
+/** `ppr remind` — the command form of the same thing. */
+export function remindCommand(): Command {
+  return new Command('remind')
+    .description('remind yourself of something on a day')
+    .argument('[text...]', 'the day and the thing, e.g. `tomorrow call the dentist`')
+    .option('--at <when>', 'the day, when it is not in the text (friday, in 3 days, 20 october)')
+    .option('-p, --print', 'print the saved entry')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr remind tomorrow call the dentist
+  ppr remind "next friday" review the roadmap
+  ppr remind every year on 20 october call mum
+  ppr remind pay the rent --at "in 3 days"
+  ppr "remind me to call the dentist tomorrow"   the same thing, quoted
+  ppr brief                                      what is coming up
+  ppr done <ref>                                 when it is dealt with
+
+--json gives the saved entry: the usual fields plus "date" and "recurs".
+A line with no readable date is kept as a log instead — kind says which — and
+the reason goes to stderr. A reminder with no day would never surface at all.`,
+    )
+    .action(async (text: string[], flags: { at?: string; print?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        // Not `resolveText` alone: with nothing to work from it opens $EDITOR,
+        // and a bare `ppr remind` is a person asking how the command works.
+        const body = text.length || hasStdin() ? await resolveText(text) : '';
+        if (!body) {
+          throw new PprError(
+            'EINVALID',
+            'Nothing to be reminded about',
+            'Try: ppr remind tomorrow call the dentist',
+          );
+        }
+        await remind(vault, self, body, flags);
+      }),
+    );
+}
+
+/** `ppr done` — a reminder dealt with. */
+export function doneCommand(): Command {
+  return new Command('done')
+    .alias('complete')
+    .description('mark a reminder dealt with, so it stops coming up')
+    .argument('<ref...>', 'entry ids, `latest`, or title fragments')
+    .action(async (refs: string[], _flags: unknown, self: Command) =>
+      withVault(self, async (vault) => {
+        const g = globals(self);
+        const completed: Entry[] = [];
+        for (const ref of refs) completed.push(await vault.complete(ref));
+
+        if (g.json) return json(completed.map(entryJson));
+        if (g.quiet) return void out(completed.map((e) => e.id).join('\n'));
+        for (const entry of completed) errline(`${color.green('✓')} ${entry.title}`);
+        // No confirmation to give, and none needed: nothing was deleted.
+        errline(color.dim('  The file stays — `status: done` is one line of frontmatter.'));
+      }),
+    );
 }
 
 /**
