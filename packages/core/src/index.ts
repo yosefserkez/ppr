@@ -33,7 +33,7 @@ export {
   type ProviderFactory,
   type SecretSource,
 } from './ai/providers.js';
-export { heuristicBrief, heuristicDistill, heuristicRecap } from './ai/fallback.js';
+export { heuristicBrief, heuristicDistill, heuristicRecap, heuristicThread } from './ai/fallback.js';
 export { parseJsonLoose } from './ai/json.js';
 
 export * from './util/text.js';

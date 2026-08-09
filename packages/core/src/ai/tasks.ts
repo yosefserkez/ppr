@@ -6,7 +6,13 @@ import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
 import { countdown, dayKey, formatDay } from '../util/time.js';
 import { asStringList, parseJsonLoose } from './json.js';
-import { GENERIC_FOLLOWUPS, heuristicBrief, heuristicDistill, heuristicRecap } from './fallback.js';
+import {
+  GENERIC_FOLLOWUPS,
+  heuristicBrief,
+  heuristicDistill,
+  heuristicRecap,
+  heuristicThread,
+} from './fallback.js';
 
 /**
  * Every task takes an optional provider. When it is absent — or when the model
@@ -168,6 +174,63 @@ Never pad. If a day is thin, say less.\n\nStyle: ${style}`,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   return text.trim() ? { text: text.trim(), ai: true } : { text: heuristicRecap(entries), ai: false };
+}
+
+const THREAD_SYSTEM = `${VOICE}
+
+Tell the story of one line of thought, from the entries that carry it.
+
+The user is picking this up again, not reading a report. Everything below
+serves the last rule.
+
+Rules:
+- One opening line: what this thread is.
+- Then how the thinking moved — what they tried, what changed their mind, what
+  they settled. Cite the entry as [id] right after the claim it supports.
+- The standing facts are what they have concluded since. Treat them as current,
+  and cite them the same way.
+- Notice time. Every entry is dated and so is today. A long silence is part of
+  the story: say when it was put down and when it came back.
+- End with where it left off: the open question, and the direction of travel in
+  the last entries. This is the point of the whole summary.
+- Never invent a next step they did not write. Never encourage, never advise.
+- Prose, in their voice, under 250 words. No headings, no bullets.`;
+
+/**
+ * The story so far: what a thread is, how it moved, and where it stopped.
+ *
+ * The thread itself was decided by the graph before this ran (`thread.ts`), so
+ * a missing or broken model costs the reasoning and never the sequence — the
+ * fallback is the timeline with its silences marked, which is what the offline
+ * command prints anyway (I2).
+ */
+export async function threadRecap(
+  entries: Entry[],
+  facts: Entry[] = [],
+  opts: TaskOptions & { now?: Date } = {},
+): Promise<{ text: string; ai: boolean }> {
+  if (!entries.length) return { text: 'No thread here.', ai: false };
+  if (!opts.provider) return { text: heuristicThread(entries, facts), ai: false };
+
+  const now = opts.now;
+  const text = await opts.provider.generate({
+    system: THREAD_SYSTEM,
+    prompt: [
+      // Without today's date "eight months later" is unsayable, and a model
+      // that cannot date the last entry will describe a dead thread as live.
+      now ? `Today is ${formatDay(now)} ${now.getFullYear()}.` : '',
+      facts.length ? `\nWhat the user has concluded since:\n${factBlock(facts)}` : '',
+      `\nThe thread, oldest first:\n\n${transcript(entries, 1200, { year: true })}`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    maxTokens: 900,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+
+  return text.trim()
+    ? { text: text.trim(), ai: true }
+    : { text: heuristicThread(entries, facts), ai: false };
 }
 
 const ASK_SYSTEM = `${VOICE}
@@ -681,12 +744,19 @@ export async function brief(
   return text.trim() ? { text: text.trim(), ai: true } : { text: heuristicBrief(items), ai: false };
 }
 
-/** Entries rendered for a model: oldest first, id-tagged so answers can cite. */
-function transcript(entries: Entry[], perEntryChars = 1200): string {
+/**
+ * Entries rendered for a model: oldest first, id-tagged so answers can cite.
+ *
+ * The year is optional because most callers hand over a week and saying "2026"
+ * five times is noise — but a thread can span years, and "Mon 06 Feb" twice
+ * eighteen months apart is not a date at all.
+ */
+function transcript(entries: Entry[], perEntryChars = 1200, opts: { year?: boolean } = {}): string {
   return [...entries]
     .sort((a, b) => (a.created < b.created ? -1 : 1))
     .map((e) => {
-      const when = formatDay(new Date(e.created));
+      const date = new Date(e.created);
+      const when = opts.year ? `${formatDay(date)} ${date.getFullYear()}` : formatDay(date);
       const body = truncate(plainText(e.body), perEntryChars);
       const tags = e.tags.length ? ` (${e.tags.map((t) => `#${t}`).join(' ')})` : '';
       return `[${e.id}] ${when} — ${e.title}${tags}\n${body}`;

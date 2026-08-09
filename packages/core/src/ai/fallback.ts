@@ -1,6 +1,9 @@
 import type { Entry } from '../types.js';
+import { factText } from '../memory.js';
+import { gapWords, threadGaps } from '../thread.js';
 import { countdown, dayKey, formatDay } from '../util/time.js';
 import { extractTags, plainText, titleFromBody, truncate } from '../util/text.js';
+import { shortId } from '../util/id.js';
 
 /**
  * Verbal scaffolding that carries no information once it is written down.
@@ -81,6 +84,38 @@ export function heuristicRecap(entries: Entry[]): string {
     lines.push('');
   }
   return lines.join('\n').trim();
+}
+
+/**
+ * The no-model story of a thread: the entries themselves, in order, with the
+ * silences marked.
+ *
+ * What a model adds here is the reasoning — what changed, what was decided,
+ * where it stopped. What it cannot add is the *shape*, which is arithmetic and
+ * already known (`threadGaps`), so an offline reader still sees that this was
+ * picked up again after eight months rather than a flat list of dates.
+ *
+ * Facts go underneath rather than in the sequence: they are conclusions, not
+ * moments, and putting one between two entries would date a thing that is not
+ * about a day (I12).
+ */
+export function heuristicThread(entries: Entry[], facts: Entry[] = []): string {
+  if (!entries.length) return 'No thread here.';
+  const ordered = [...entries].sort((a, b) => (a.created < b.created ? -1 : 1));
+  const gaps = new Map(threadGaps(ordered).map((g) => [g.before, g.days]));
+
+  const lines: string[] = [];
+  for (const entry of ordered) {
+    const gap = gaps.get(entry.id);
+    if (gap !== undefined) lines.push('', `— ${gapWords(gap)} —`, '');
+    const date = new Date(entry.created);
+    lines.push(`${formatDay(date)} ${date.getFullYear()} — [${shortId(entry.id)}] ${entry.title}`);
+  }
+  if (facts.length) {
+    lines.push('', 'What you concluded:');
+    for (const fact of facts) lines.push(`- [${shortId(fact.id)}] ${factText(fact.body)}`);
+  }
+  return lines.join('\n');
 }
 
 /** Questions worth answering about almost any entry — used when no model is set. */

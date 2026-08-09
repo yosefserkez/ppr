@@ -608,6 +608,21 @@ export class Vault {
     };
   }
 
+  /**
+   * The story of a thread, in the user's own words, ending where it left off.
+   *
+   * Which entries are on it was settled by arithmetic over the graph, so a
+   * missing or broken model costs the reasoning and never the sequence: the
+   * fallback is the timeline itself, silences and all (I2).
+   */
+  threadRecap(thread: Thread, opts: { signal?: AbortSignal } = {}) {
+    return tasks.threadRecap(
+      thread.entries.map((m) => m.entry),
+      thread.facts.map((f) => f.fact.entry),
+      { provider: this.provider, now: this.clock.now(), ...opts },
+    );
+  }
+
 
   stats(): VaultStats {
     const entries = this.catalog.entries();

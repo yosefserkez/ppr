@@ -223,6 +223,62 @@ test('recap falls back to a grouped list without a model', async () => {
   assert.match(result.text, /Did a thing/);
 });
 
+/** A thread whose entries sit months apart, so time is part of the story. */
+async function threadedVault(provider) {
+  const vault = await makeVault({ provider });
+  await vault.add({ body: 'Coffee subscription idea', title: 'Coffee subscription', created: '2026-01-05T12:00:00' });
+  await vault.add({ body: 'costed [[Coffee subscription]] out', title: 'Unit economics', created: '2026-01-09T12:00:00' });
+  await vault.add({ body: 'back to [[Coffee subscription]] at last', title: 'Picking it up', created: '2026-09-20T12:00:00' });
+  return vault;
+}
+
+test('the story of a thread is asked for with its dates, today, and the facts', async () => {
+  const seen = [];
+  const vault = await threadedVault(fakeProvider('It started as a subscription idea [x1] …', { record: seen }));
+  await vault.addFact('The coffee idea only works above 200 subscribers');
+
+  const thread = vault.thread('coffee subscription');
+  const result = await vault.threadRecap(thread);
+
+  assert.equal(result.ai, true);
+  assert.match(result.text, /subscription idea/);
+  assert.match(seen[0].system, /where it left off/);
+  assert.match(seen[0].prompt, /Today is/);
+  // A thread can span years, so the year is not optional here.
+  assert.match(seen[0].prompt, /2026/);
+});
+
+test('with no model the story is the timeline, and it still shows the silence', async () => {
+  const vault = await threadedVault(undefined);
+  const result = await vault.threadRecap(vault.thread('coffee subscription'));
+
+  assert.equal(result.ai, false);
+  assert.match(result.text, /Coffee subscription/);
+  assert.match(result.text, /— 8 months later —/, 'the shape of time survives having no model');
+  assert.ok(result.text.indexOf('Coffee subscription') < result.text.indexOf('Picking it up'), 'oldest first');
+});
+
+test('a model that says nothing usable about a thread never costs the timeline', async () => {
+  for (const bad of ['', '   \n ']) {
+    const vault = await threadedVault(fakeProvider(bad));
+    const result = await vault.threadRecap(vault.thread('coffee subscription'));
+    assert.equal(result.ai, false);
+    assert.match(result.text, /Unit economics/);
+  }
+});
+
+test('what the thread concluded is listed apart from what happened', async () => {
+  const vault = await threadedVault(undefined);
+  const seed = vault.list().at(-1);
+  await vault.addFact('The coffee idea only works above 200 subscribers');
+  await vault.update(vault.facts()[0].id, { extra: { from: [seed.id] } });
+
+  const { text } = await vault.threadRecap(vault.thread(seed.id));
+  const [timeline, concluded] = text.split('What you concluded:');
+  assert.match(concluded, /200 subscribers/);
+  assert.doesNotMatch(timeline, /200 subscribers/, 'a conclusion is not a moment on the timeline (I12)');
+});
+
 /**
  * The learn pipeline makes two calls: extract, then reconcile. Answering each
  * by what the system prompt asks for keeps the scripts readable.
