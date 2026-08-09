@@ -5,6 +5,7 @@ import { globals, hoistGlobals, withVault } from './context.js';
 import { closePrompts, hasStdin, resolveText } from './input.js';
 import { color, entryJson, errline, json, out, setColor, shortId } from './render.js';
 import { overview } from './overview.js';
+import { externalFor, externalName, runExternal } from './external.js';
 import { suggest } from './suggest.js';
 import {
   appendCommand,
@@ -125,7 +126,13 @@ const commandNames = (): string[] =>
 function notACommand(text: string[]): PprError {
   const guess = suggest(text[0]!, commandNames());
   const joined = text.join(' ');
-  const hints = [guess ? `Did you mean \`ppr ${guess}\`?` : ''];
+  const hints = [
+    guess ? `Did you mean \`ppr ${guess}\`?` : '',
+    // The word did get one more chance to be a command before this: ppr looked
+    // for `ppr-<word>` on PATH. Saying so is how anybody finds out they can
+    // write one.
+    `Nothing called \`${externalName(text[0]!)}\` on your PATH either — that is how new commands are added.`,
+  ];
 
   // Only offer quoting when quoting would actually change the outcome.
   if (text.length > 1) {
@@ -210,8 +217,22 @@ process.stdout.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.exit(0);
 });
 
+const argv = hoistGlobals(process.argv.slice(2));
+
+/**
+ * `ppr foo` is `ppr-foo`, checked before commander ever sees the word.
+ *
+ * Before parsing rather than inside the fallback action, because commander
+ * would try to interpret the plugin's own flags on the way past — and a
+ * subcommand ppr has never heard of has to be able to take `--verbose`
+ * without ppr having an opinion about it. A built-in still wins; this only
+ * runs for a word that is not one.
+ */
+const external = argv.length ? externalFor(argv[0]!, commandNames()) : null;
+if (external) process.exit(runExternal(external, argv.slice(1), globals()));
+
 try {
-  await program.parseAsync(hoistGlobals(process.argv.slice(2)), { from: 'user' });
+  await program.parseAsync(argv, { from: 'user' });
 } catch (err) {
   process.exitCode = reportError(err);
 } finally {

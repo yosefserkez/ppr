@@ -1,0 +1,104 @@
+/**
+ * `ppr foo` runs `ppr-foo`, the way git runs `git-foo`.
+ *
+ * The cheapest extension point there is, and the one with no API: put an
+ * executable on PATH and it is a ppr subcommand, in any language, with no
+ * registration, no manifest, and no version of ppr that has to know it exists.
+ * `ppr context` and `--json` are how it reads; its own arguments are how it is
+ * driven.
+ *
+ * A built-in always wins. Shadowing `ppr ls` from PATH would mean a vault
+ * behaving differently on two machines for reasons nobody can see, and the
+ * point of this is to add commands rather than to redefine them.
+ *
+ * I11 is untouched: only a bare word ever reaches here, and a bare word was
+ * never going to become an entry. What changes is that the word now has one
+ * more place to be a command before it is an error.
+ */
+
+import { spawnSync } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
+import { constants as osConstants } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { findVault } from '@ppr/core/node';
+import type { GlobalOptions } from './context.js';
+
+/** A word that could be a command name. Anything with a space is a note. */
+const COMMAND_WORD = /^[a-z0-9][a-z0-9._-]*$/i;
+
+const signals: Record<string, number> = osConstants.signals;
+
+/** What an external subcommand is called on disk. */
+export const externalName = (word: string): string => `ppr-${word}`;
+
+/** The first executable of that name on PATH, or null. */
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!COMMAND_WORD.test(name.replace(/^ppr-/, ''))) return null;
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      /* not here, or not ours to run */
+    }
+  }
+  return null;
+}
+
+/** The binary `ppr <word>` should hand over to, if there is one. */
+export function externalFor(
+  word: string,
+  known: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (!COMMAND_WORD.test(word) || known.includes(word)) return null;
+  return findOnPath(externalName(word), env);
+}
+
+/**
+ * The contract an external subcommand is handed, and the reason it is
+ * environment rather than argv.
+ *
+ * Global flags are hoisted out of argv before anything sees them (L4), so by
+ * the time a word is recognised as external its `--json` is long gone. Passing
+ * them back on the command line would mean every plugin having to parse ppr's
+ * flags to stay out of their way; naming them in the environment says the same
+ * thing and can be ignored by a plugin that does not care. `PPR_NO_AI` and
+ * `NO_COLOR` already mean this everywhere else, so they keep their spellings.
+ */
+export function externalEnv(opts: GlobalOptions): Record<string, string> {
+  const found = findVault(opts.vault ? { explicit: opts.vault } : {});
+  return {
+    PPR_VAULT: found.root,
+    ...(opts.json ? { PPR_JSON: '1' } : {}),
+    ...(opts.quiet ? { PPR_QUIET: '1' } : {}),
+    ...(opts.color === false ? { NO_COLOR: '1' } : {}),
+    ...(opts.ai === false ? { PPR_NO_AI: '1' } : {}),
+  };
+}
+
+/**
+ * Hands the terminal over and reports what came back.
+ *
+ * Synchronous and stdio-inherited on purpose: an external subcommand may be
+ * interactive, may want a pager, and owns the terminal for as long as it runs.
+ * Its exit code becomes ppr's, because to whoever typed it there was only ever
+ * one command.
+ */
+export function runExternal(bin: string, args: string[], opts: GlobalOptions): number {
+  const result = spawnSync(bin, args, {
+    stdio: 'inherit',
+    env: { ...process.env, ...externalEnv(opts) },
+  });
+  if (result.error) {
+    process.stderr.write(`error ${result.error.message}\n`);
+    return 6;
+  }
+  // A child killed by a signal has no exit code; 128+n is what a shell reports
+  // for the same thing, so `ppr foo` and `ppr-foo` still agree.
+  if (result.signal) return 128 + (signals[result.signal] ?? 0);
+  return result.status ?? 0;
+}

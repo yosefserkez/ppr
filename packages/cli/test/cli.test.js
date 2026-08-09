@@ -13,7 +13,7 @@ const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.j
  * Runs the real binary against a throwaway vault, with AI forced off and the
  * config dir redirected so tests can never touch the developer's own setup.
  */
-function ppr(vault, args, { input, editor } = {}) {
+function ppr(vault, args, { input, editor, env } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [BIN, ...args], {
       env: {
@@ -23,6 +23,7 @@ function ppr(vault, args, { input, editor } = {}) {
         NO_COLOR: '1',
         XDG_CONFIG_HOME: join(vault, '.xdg'),
         ...(editor ? { PPR_EDITOR: editor } : {}),
+        ...env,
       },
       stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
@@ -341,6 +342,46 @@ test('a hook that fails costs one line, not the exit code and not stdout', async
     // Whatever a hook prints is its own business, never ppr's output (I10).
     assert.ok(JSON.parse(stdout).id);
     assert.doesNotMatch(stdout, /garbage/);
+  });
+});
+
+test('an unknown word runs `ppr-<word>` from PATH, the way git does', async () => {
+  await withVault(async (dir) => {
+    await writeScript(
+      dir,
+      'ppr-foo',
+      'echo "foo ran with: $*"\necho "vault=$PPR_VAULT json=${PPR_JSON:-0} quiet=${PPR_QUIET:-0}"\nexit 7',
+    );
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+
+    const ran = await ppr(dir, ['foo', 'a', '--verbose'], { env });
+    // Its arguments are its own — ppr has no opinion about `--verbose`.
+    assert.match(ran.stdout, /foo ran with: a --verbose/);
+    assert.equal(ran.code, 7, "the plugin's exit code is ppr's exit code");
+    assert.ok(ran.stdout.includes(`vault=${dir}`), 'it is told which vault it is in');
+
+    // Global flags were hoisted out of argv before the word was even read
+    // (L4), so they arrive as environment or not at all.
+    const piped = await ppr(dir, ['--json', '-q', 'foo'], { env });
+    assert.match(piped.stdout, /json=1 quiet=1/);
+
+    // A built-in always wins: PATH may add commands, never redefine them.
+    await writeScript(dir, 'ppr-ls', 'echo "hijacked"');
+    const ls = await ppr(dir, ['ls'], { env });
+    assert.doesNotMatch(ls.stdout, /hijacked/);
+  });
+});
+
+test('a word with no command and no plugin is still never a note', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['sync']);
+    assert.equal(code, 2);
+    assert.match(stderr, /Unknown command: sync/);
+    // The error names the convention, because that is how anyone finds out
+    // they could have written one.
+    assert.match(stderr, /ppr-sync/);
+    // I11 holds: nothing landed in the vault.
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
   });
 });
 
