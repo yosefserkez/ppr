@@ -57,11 +57,15 @@ const GITIGNORE = `# ppr keeps a disposable parse cache here
 const README = (root: string) => `# ppr vault
 
 Plain markdown, one file per entry, under \`entries/YYYY/MM/\`.
+Standing facts — what is true, rather than what happened — get a file each in
+\`memory/\`. That store is a projection of the journal, so deleting it costs
+nothing: \`ppr memory learn --all\` builds it again.
 Nothing here needs ppr to be readable — that is the point.
 
 - \`ppr\` — write an entry
 - \`ppr ls\` — recent entries
 - \`ppr search <query>\` — find something
+- \`ppr memory ls\` — what ppr knows
 - \`ppr --help\` — everything else
 
 Vault: \`${root}\`

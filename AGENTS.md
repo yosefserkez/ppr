@@ -253,11 +253,18 @@ full or partial id, or a title fragment. Ambiguity is an error with candidates
 listed, never a silent guess.
 
 **Fact.** A `kind: memory` entry, living in `memory/<slug>-xxxx.md` — flat and
-undated, because a fact is about a thing rather than a day. The body is the fact,
-one line. Everything else rides in `extra`, which round-trips for free (I3):
-`from` (the entry ids it was extracted from), `status`, `conflicts`,
-`supersededBy`. `source` is `manual` or `learned`, and nothing automatic may
-rewrite a `manual` one.
+undated *as a file*, because a fact is about a thing rather than a day. The body
+is the fact, one line. Everything else rides in `extra`, which round-trips for
+free (I3): `from` (the entry ids it was extracted from), `status`, `conflicts`,
+`supersededBy`, plus `date` and `recurs` when the fact carries a calendar day.
+`source` is `manual` or `learned`, and nothing automatic may rewrite a `manual`
+one.
+
+`date` (`YYYY-MM-DD`, with `0000` for an unknown year) and `recurs: yearly` are
+the only structure the layer adds, and they earn it: they make `ppr brief` and
+`ppr context` arithmetic rather than a judgement, so the forward-looking half
+runs offline and identically every time. `recurs` is deliberately not a
+scheduling language — a tool that grows RRULEs has become a calendar.
 
 The store is a **projection**: delete `memory/` and `ppr memory learn --all`
 rebuilds it. That is the property to protect when changing anything here — it
@@ -304,7 +311,8 @@ casts. `exactOptionalPropertyTypes` is off, but conditional spreads
 ### Add a command
 
 1. Write it in the right file under `commands/` (`capture`, `browse`, `think`,
-   `settings`) — or a new file if it is a new category.
+   `settings`, `setup`, `schedule`, `meta`) — or a new file if it is a new
+   category.
 2. Return a `Command`. Take global options via `globals()`, never
    `cmd.optsWithGlobals()`.
 3. Wrap the body in `withVault(self, async (vault) => …)` so `--vault` and `--no-ai`
@@ -341,7 +349,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 82 tests. No network. No TTY required.
+pnpm test        # 209 tests. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -351,10 +359,24 @@ pnpm build
 - `core/test/entry.test.js` — round trips, parsing, ids, time parsing.
 - `core/test/vault.test.js` — CRUD, filtering, refs, links, external edits.
 - `core/test/ai.test.js` — every AI task, with a scripted fake provider and its
-  fallback. This is how AI behaviour is tested without a model.
+  fallback. This is how AI behaviour is tested without a model. Learning and
+  reconciliation live here too, because both are AI tasks with a fallback.
+- `core/test/memory.test.js` — the pure half of the fact layer: date parsing,
+  recurrence, and which words identify a fact. No provider involved.
+- `core/test/links.test.js` — auto-linking known names without touching code,
+  URLs, or a link that is already there.
 - `core/test/providers.test.js` — provider wire formats against a local HTTP stub.
 - `core/test/search.test.js` — ranking and config paths.
+- `core/test/audio.test.js` — silence detection on synthesised WAVs (L14).
+- `core/test/microphone.test.js` — device enumeration and which inputs are
+  virtual (L15).
 - `cli/test/state.test.js` — the browser reducer. Pure, fast, no terminal.
+- `cli/test/select.test.js` — the inline picker's reducer and the frame it
+  renders, including typed answers for a machine with no terminal.
+- `cli/test/schedule.test.js` — the launchd plist and crontab line, including
+  the absolute paths a scheduler needs (L22).
+- `cli/test/followups.test.js` — when a capture is allowed to ask a question.
+- `cli/test/suggest.test.js` — did-you-mean, and what it refuses to guess.
 - `cli/test/cli.test.js` — the real binary, spawned against a temp vault.
 
 **Rules.** No test may reach the network. No test may touch the developer's real
