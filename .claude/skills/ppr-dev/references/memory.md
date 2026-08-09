@@ -77,7 +77,10 @@ would disagree inside a release.
 `ppr brief` and the bare `ppr` overview each end with a count of the undated
 ones, never the items themselves: the brief's `--json` array is dated things,
 and a script filtering it on `.overdue` should not have to step over a
-sentence.
+sentence. It is a count of the *dateless* ones and not of everything the brief
+is not showing — a reminder past the seven-day grace has left the brief and is
+at the top of `ppr todos`, which is the list that keeps things until they are
+done.
 
 **The fallback story is the lesson.** A dateless `ppr remind …` used to become
 a log, honestly, because nothing could display an undated intention. `ppr

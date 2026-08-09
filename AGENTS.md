@@ -491,7 +491,11 @@ filled in. What the missing field costs is the calendar: `toDated` returns
 nothing, so a todo never reaches `ppr brief` and never will, because a brief
 that showed dateless things would stop being a countdown. `ppr todos` is the
 list instead, ordered most-overdue, then soonest, then oldest-undated, and
-`ppr brief` ends with a count of the ones it cannot show.
+`ppr brief` ends with a count of the *dateless* ones — not of everything it is
+not showing. A reminder more than a week overdue has left the brief by then
+(the grace window, below) and is still at the top of `ppr todos`, which is
+where a thing you did not do belongs; the brief is a countdown and a countdown
+that reopened last month would be a guilt list.
 
 This is also why the dateless capture fallback changed. `ppr remind me about
 the passport thing` used to become a log, and that was right while nothing
