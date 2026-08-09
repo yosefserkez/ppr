@@ -134,8 +134,14 @@ chmod +x "$TARGET"
 if [ "$PLUGINS" = 1 ]; then
   for plugin in $PLUGIN_NAMES; do
     dest="$BIN_DIR/$plugin"
-    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-      echo "! $dest exists and is not ours — leaving it alone"
+    # "Ours" is a symlink pointing back at this repo, and nothing else. The
+    # test used to be "is it a symlink", which let an install quietly replace
+    # the `ppr-notify` somebody had linked to their own dotfiles — the exact
+    # thing the convention exists to allow. `-L` as well as `-e`, because a
+    # symlink whose target is gone is still somebody's decision.
+    if { [ -e "$dest" ] || [ -L "$dest" ]; } &&
+       [ "$(readlink "$dest" 2>/dev/null)" != "$REPO/plugins/$plugin" ]; then
+      echo "! $dest is not ours — leaving it alone (that is how you replace a plugin)"
       continue
     fi
     ln -sf "$REPO/plugins/$plugin" "$dest"
