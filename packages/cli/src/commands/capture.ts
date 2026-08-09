@@ -215,7 +215,7 @@ export async function remind(
   });
   const saved = await finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
   // Last, and unable to undo anything before it: the markdown is already on
-  // disk, so a bridge that fails costs a copy in another app and never the
+  // disk, so a plugin that fails costs a copy in another app and never the
   // entry (I2's shape).
   await handToReminders(vault, saved, decision);
   return saved;
