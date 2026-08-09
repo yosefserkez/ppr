@@ -11,12 +11,21 @@
  *   pnpm eval --repeat 3             # same suite three times, to see flakiness
  *   pnpm eval --dimension dates      # one dimension
  *   pnpm eval --json > runs/today.json
+ *   pnpm eval --save                 # also append the score to runs.jsonl
+ *
+ * `--save` appends one JSON line — when, model, repeat, summary — to
+ * `eval/runs.jsonl`, which is deliberately untracked: it is one machine's
+ * measurements of a system that is not deterministic, and a filtered run
+ * records a filtered summary, so the numbers are only comparable to numbers
+ * taken the same way. It exists so "is this better than last month" has an
+ * answer that is not a memory.
  *
  * Scoring is deterministic keyword matching, not a model judging a model. A
  * judge would add a second unmeasured system to the thing being measured, and
  * "did the fact mention Emily and chocolate" needs no judgement.
  */
 
+import { appendFile } from 'node:fs/promises';
 import { Vault, MemoryStorage, DEFAULT_CONFIG, mergeConfig, toFact, createProvider, withProviderDefaults } from '../dist/index.js';
 import { loadConfig, loadSecrets } from '../dist/node.js';
 import { CASES } from './cases.js';
@@ -32,6 +41,8 @@ const REPEAT = Number(flag('repeat', 1));
 const ONLY_DIMENSION = flag('dimension', null);
 const ONLY_NAME = flag('case', null);
 const AS_JSON = has('json');
+const SAVE = has('save');
+const RUNS_FILE = new URL('runs.jsonl', import.meta.url);
 
 // ---------------------------------------------------------------- matching
 
@@ -223,6 +234,7 @@ const paint = (code, s) => (color ? `${code}${s}${RESET}` : s);
 
 async function main() {
   const { provider, config } = await buildProvider();
+  const model = `${config.ai.provider}/${config.ai.model}`;
   const selected = CASES.filter(
     (c) =>
       (!ONLY_DIMENSION || c.dimension === ONLY_DIMENSION) &&
@@ -232,7 +244,7 @@ async function main() {
 
   if (!AS_JSON) {
     process.stderr.write(
-      `${paint(BOLD, 'ppr memory eval')}  ${config.ai.provider}/${config.ai.model}  ` +
+      `${paint(BOLD, 'ppr memory eval')}  ${model}  ` +
         `${selected.length} cases × ${REPEAT}\n\n`,
     );
   }
@@ -247,10 +259,15 @@ async function main() {
   }
 
   const summary = summarise(runs);
+  if (SAVE) {
+    const record = { when: new Date().toISOString(), model, repeat: REPEAT, summary };
+    await appendFile(RUNS_FILE, `${JSON.stringify(record)}\n`);
+    process.stderr.write(`${paint(DIM, 'saved to eval/runs.jsonl')}\n`);
+  }
   if (AS_JSON) {
     process.stdout.write(
       `${JSON.stringify(
-        { model: `${config.ai.provider}/${config.ai.model}`, repeat: REPEAT, summary, runs },
+        { model, repeat: REPEAT, summary, runs },
         null,
         2,
       )}\n`,

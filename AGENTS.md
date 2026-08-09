@@ -379,13 +379,27 @@ regression from model noise.
 pnpm eval                                # the configured model
 pnpm eval --model openai/gpt-4o-mini     # a specific one
 pnpm eval --dimension dates --repeat 3   # while iterating on one prompt
+pnpm eval --save                         # append the score to eval/runs.jsonl
 pnpm eval --json > runs/$(date +%F).json # a number to compare next month
 ```
 
-Dimensions: decomposition, precision, provenance, dates, reconciliation,
-retrieval. A case asserts on *meaning* — a set of words that must appear in some
-fact — and every case also says what would be wrong, because a suite that only
-measures recall rewards a model that keeps everything.
+Dimensions: decomposition, precision, recall, provenance, dates,
+reconciliation, retrieval. A case asserts on *meaning* — a set of words that
+must appear in some fact — and every case also says what would be wrong,
+because a suite that only measures recall rewards a model that keeps
+everything.
+
+`recall` is the one that carries a realistic load: eight entries, deliberately
+past `EXTRACT_CHUNK_CHARS` so the batch spans more than one extraction call.
+Every other case hands the model one or two short entries, which is the size at
+which nothing can go wrong — and that is exactly why a backfill could extract
+two thirds of a vault while the suite scored 100%.
+
+`--save` appends one line of JSON (when, model, repeat, summary) to
+`packages/core/eval/runs.jsonl`, so "did that prompt change help" has an answer
+that is not a memory. The file is untracked on purpose: it is one machine's
+measurements of a non-deterministic system, and a filtered run records a
+filtered summary.
 
 **Testing a TUI.** The reducer covers the logic. To verify real rendering, drive the
 built binary through a pseudo-terminal — Python's `pty` module works where `script`
