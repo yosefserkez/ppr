@@ -130,9 +130,15 @@ search all skip it unless `-k memory` asks for it, and `ppr memory learn` never
 reads a memory as a source. Ignoring this is how the memory layer ate its own
 tail — learn defaulted to `latest`, `latest` became the fact it had just
 written, and every run after the first reported "nothing durable in there".
-*Enforced by:* `MEMORY_KIND` in `types.ts`, the guard in `filterEntries()`, and
-`Catalog.timeline()`; tests "memory never becomes the thing `latest` means" and
-"facts stay out of lists, recaps, and search until asked for by kind".
+The one deliberate exception is `ppr export`, which is interchange rather than
+a view: it means "everything you have", and a backup that silently omitted the
+fact store would lose data. It widens the default at its own call site (an
+explicit `-k` is still exactly a filter) — `filterEntries()` keeps its default,
+because every browsing command depends on it. *Enforced by:* `MEMORY_KIND` in
+`types.ts`, the guard in `filterEntries()`, and `Catalog.timeline()`; tests
+"memory never becomes the thing `latest` means", "facts stay out of lists,
+recaps, and search until asked for by kind", and "export hands over the facts
+too, unless you asked for a kind".
 
 ---
 

@@ -224,6 +224,28 @@ test('export round-trips through json and jsonl', async () => {
   });
 });
 
+test('export hands over the facts too, unless you asked for a kind', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'shipped the thing']);
+    await ppr(dir, ['memory', 'add', 'the deploy key lives in 1Password']);
+
+    // Facts stay out of lists and recaps (I12), but export means "everything
+    // you have" — a backup that quietly drops the fact store loses data.
+    const all = JSON.parse((await ppr(dir, ['export'])).stdout);
+    assert.equal(all.length, 2);
+    assert.ok(all.some((e) => e.kind === 'memory'), 'export omitted the fact');
+
+    // An explicit filter is still exactly a filter.
+    const logs = JSON.parse((await ppr(dir, ['export', '-k', 'log'])).stdout);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].kind, 'log');
+
+    const facts = JSON.parse((await ppr(dir, ['export', '-k', 'memory'])).stdout);
+    assert.equal(facts.length, 1);
+    assert.equal(facts[0].kind, 'memory');
+  });
+});
+
 test('list commands stay plain when there is no terminal', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['alpha entry']);

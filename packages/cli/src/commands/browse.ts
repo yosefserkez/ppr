@@ -1,6 +1,16 @@
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { formatDay, plainText, PprError, relativeAge, truncate } from '@ppr/core';
+import {
+  formatDay,
+  MEMORY_KIND,
+  plainText,
+  PprError,
+  relativeAge,
+  truncate,
+  type Entry,
+  type ListQuery,
+  type Vault,
+} from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { ago, color, entryDetail, entryJson, entryList, json, out, searchList, table, shortId } from '../render.js';
 import { spawnEditorOn } from '../input.js';
@@ -283,7 +293,7 @@ export function exportCommand(): Command {
 
   filterFlags(cmd).action(async (flags: FilterFlags & { format?: string }, self: Command) =>
     withVault(self, async (vault) => {
-      const entries = vault.list(toQuery({ ...flags, all: flags.limit ? false : true }, 0, vault.now()));
+      const entries = everything(vault, toQuery({ ...flags, all: flags.limit ? false : true }, 0, vault.now()));
       switch (flags.format) {
         case 'jsonl':
           for (const entry of entries) out(JSON.stringify(entryJson(entry)));
@@ -301,6 +311,31 @@ export function exportCommand(): Command {
     }),
   );
   return cmd;
+}
+
+/**
+ * What the filters select, facts included — the export view of the vault.
+ *
+ * `vault.list()` leaves `kind: memory` out unless it is asked for, because a
+ * fact is state rather than something that happened and has no place in a
+ * timeline (I12). Export is not a timeline: it is interchange, the answer to
+ * "give me everything you have", and a backup that silently omits the fact
+ * store is a backup that loses data. So the *default* widens here and only
+ * here; an explicit `-k` is still honoured exactly, and `filterEntries` keeps
+ * its own default, which every browsing command still depends on.
+ */
+function everything(vault: Vault, query: ListQuery): Entry[] {
+  if (query.kind) return vault.list(query);
+
+  // Paging has to happen after the merge, so the two lists are pulled whole.
+  const { limit, offset, order, ...filters } = query;
+  const merged = [...vault.list(filters), ...vault.list({ ...filters, kind: MEMORY_KIND })].sort(
+    // Ids are time-prefixed and monotonic, so they order two entries that a
+    // second-resolution `created` cannot tell apart (L20).
+    (a, b) => (order === 'asc' ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id)),
+  );
+  const start = offset ?? 0;
+  return limit ? merged.slice(start, start + limit) : merged.slice(start);
 }
 
 /** Body text for piping into other tools. */
