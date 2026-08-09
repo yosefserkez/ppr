@@ -270,9 +270,17 @@ months. People and how they relate to the user, preferences, decisions,
 commitments, dates that repeat, stable context about projects and tools.
 
 Rules:
-- Split compound sentences. "My girlfriend Emily's birthday is 20 October and
-  she likes chocolate" is three facts: who Emily is, when her birthday is, and
-  what she likes. One idea per fact, always.
+- Split a sentence that holds more than one property of its subject. "My
+  girlfriend Emily's birthday is 20 October and she likes chocolate" is three
+  facts: who Emily is, when her birthday is, and what she likes. Three
+  different things about her, each useful on its own.
+- Do not split one property into its parts. "My financial goals are to save
+  aggressively, invest in index funds, and grow long-term wealth" is one fact
+  that lists three things, not three facts — as fragments each one says less
+  than the sentence did. Ask whether the pieces are different properties or
+  items of the same one.
+- Say each thing once. A fact that restates another in different words, or
+  that only follows from it, is not a second fact.
 - Every fact must stand on its own, read cold, a year from now. Name the
   subject in each one — never "she", "it", "that project".
 - Refer to the writer as "the user". "My sister" becomes "the user's sister".

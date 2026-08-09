@@ -64,6 +64,33 @@ export const CASES = [
     ],
   },
 
+  {
+    // The other half of decomposition, and the one the prompt used to get
+    // wrong. "One idea per fact, always" was obeyed literally on real entries:
+    // a single preference written as a list came back as three fragments that
+    // each said almost nothing, and the store filled up with them.
+    name: 'a list of facets of one preference stays one fact',
+    dimension: 'decomposition',
+    rounds: [
+      {
+        entries: [
+          {
+            name: 'note',
+            text: 'Thinking about money again. My financial goals are to save aggressively, invest in index funds, and grow long-term wealth. Spent an hour in the spreadsheet and got nowhere.',
+          },
+        ],
+        expect: {
+          // The whole list survives in one fact. Split three ways, no fragment
+          // would carry both of these, which is what makes this the check.
+          facts: [{ must: ['index', 'wealth'] }],
+          forbid: [['spreadsheet']],
+          // Three facts here is the failure, not a stricter reading of one.
+          total: [1, 2],
+        },
+      },
+    ],
+  },
+
   // ---------------------------------------------------------------- recall
   {
     // The case that would have caught the lossy backfill. Every earlier case
