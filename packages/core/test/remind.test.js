@@ -62,6 +62,20 @@ test('a line with no date keeps every word and claims no day', () => {
   assert.equal(read('remind me 2 things about the deploy').text, '2 things about the deploy');
 });
 
+test('a day inferred from a sentence is never one that has already gone', () => {
+  // "…the end of the month" ended on `month`, which means the *first* of it to
+  // `--since` — so the reminder arrived already a week overdue.
+  const expenses = read('remind me to file expenses before the end of the month');
+  assert.equal(expenses.date, undefined);
+  assert.match(expenses.text, /file expenses/);
+
+  for (const input of ['remind me last friday to call mum', 'remind me yesterday to call mum']) {
+    assert.equal(read(input).date, undefined, input);
+  }
+  // Today is still a day someone can mean.
+  assert.equal(read('remind me today to call mum').date, '2026-07-27');
+});
+
 test('a date in the middle of a sentence is a sentence', () => {
   // Only the ends are read. Guessing at a date buried in prose is how a note
   // about the friday deploy would acquire a due date it never asked for.

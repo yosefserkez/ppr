@@ -36,6 +36,7 @@ import {
   parseReminder,
   REMINDER_KEYS,
   reminderExtra,
+  tidyReminder,
   type ParsedReminder,
 } from './remind.js';
 import { filterEntries, searchEntries } from './search.js';
@@ -324,7 +325,7 @@ export class Vault {
     const drafted = await tasks
       .extractReminder(read.text || text, { provider: this.provider, now, ...opts })
       .catch(() => null);
-    return drafted ?? read;
+    return drafted ? { ...drafted, text: tidyReminder(drafted.text) || drafted.text } : read;
   }
 
   /**

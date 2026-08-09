@@ -40,9 +40,6 @@ export function reminderExtra(fields: {
   return extra;
 }
 
-/** Whether an entry has already been dealt with. */
-export const isDone = (extra: Record<string, unknown>): boolean => extra.status === 'done';
-
 /** What a reminder says, once the date has been read out of the words. */
 export interface ParsedReminder {
   /** The reminder itself, with the when-phrase removed. */
@@ -70,6 +67,8 @@ function monthIndex(word: string): number | null {
   return i === -1 ? null : i;
 }
 
+const MONTH_DAY = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)$|^([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?$/;
+
 /**
  * `20 october`, `oct 20`, `20th october` — the next one.
  *
@@ -77,8 +76,6 @@ function monthIndex(word: string): number | null {
  * fixing that generally would change what `--since` means. Here the question
  * is only ever about the future, so "the next 20 October" is the only reading.
  */
-const MONTH_DAY = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)$|^([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?$/;
-
 function monthDay(raw: string, now: Date): Date | null {
   const m = MONTH_DAY.exec(raw);
   if (!m) return null;
@@ -106,6 +103,11 @@ function monthDay(raw: string, now: Date): Date | null {
 export function futureWhen(phrase: string, now: Date): Date | null {
   const raw = phrase.trim().toLowerCase();
   if (!raw) return null;
+  // `week`, `month`, `year` mean "the start of this one" to `--since`, which is
+  // a window rather than a day. Reading them here turned "file expenses before
+  // the end of the month" into a reminder due on the first — already a week
+  // overdue on the day it was set.
+  if (PERIOD.test(raw)) return null;
   const ms = parseDuration(raw);
   if (ms !== null) return new Date(now.getTime() + ms);
   // A month-day form is judged here and nowhere else, valid or not: falling
@@ -113,6 +115,9 @@ export function futureWhen(phrase: string, now: Date): Date | null {
   if (MONTH_DAY.test(raw)) return monthDay(raw, now);
   return parseWhen(raw, now);
 }
+
+/** Words naming a period rather than a day. `next month` is still a day. */
+const PERIOD = /^(?:this\s+)?(?:week|month|year)$/;
 
 /**
  * Whether a phrase is even worth handing to a date parser.
@@ -156,15 +161,27 @@ function extractWhen(text: string, now: Date): { date: string; rest: string } | 
       const candidate = clean(phrase);
       if (!candidate || !looksLikeAWhen(candidate)) continue;
       const when = futureWhen(candidate, now);
-      const date = when && asDay(when);
+      // A day *inferred* from a sentence is never one that has already gone.
+      // Nobody means "remind me last friday", so a phrase that resolves
+      // backwards is a phrase that was misread — and reading it as a date
+      // would file a reminder that arrives already overdue. `--at` is the
+      // place to name a past day, because there it was typed on purpose.
+      if (!when || when < startOfDay(now)) continue;
+      const date = asDay(when);
       if (date) return { date, rest };
     }
   }
   return null;
 }
 
-/** Words that are grammar around the reminder rather than part of it. */
-const tidy = (text: string): string =>
+/**
+ * Strips the grammar that held the when-phrase on, so what is left is the
+ * thing itself. Exported because a model's answer needs the same trim: asked
+ * to remove "before the end of the month" it hands back "to file expenses",
+ * and a reminder titled "to file expenses" reads like a fragment because it
+ * is one.
+ */
+export const tidyReminder = (text: string): string =>
   text
     .replace(/^[\s,:;.]+|[\s,:;.]+$/g, '')
     .replace(/^(?:to|that|about)\s+/i, '')
@@ -196,7 +213,7 @@ export function parseReminder(input: string, now: Date): ParsedReminder {
 
   const found = extractWhen(text, now);
   return {
-    text: tidy(found ? found.rest : text),
+    text: tidyReminder(found ? found.rest : text),
     ...(found ? { date: found.date } : {}),
     // Recurrence with nothing to recur from is not a fact about anything.
     ...(found && recurs ? { recurs } : {}),
