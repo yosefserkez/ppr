@@ -14,6 +14,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { PprError } from '@ppr/core';
 import { run } from '@ppr/core/node';
 
 /** The jobs ppr knows how to schedule. Both are ordinary CLI commands. */
@@ -57,10 +58,20 @@ export const labelFor = (job: JobName): string => `sh.ppr.${job}`;
 const agentPath = (job: JobName): string =>
   join(homedir(), 'Library', 'LaunchAgents', `${labelFor(job)}.plist`);
 
-/** The argv a scheduled run executes: this same binary, same flags, no shell. */
-export function jobArgv(schedule: Schedule, binary: string): string[] {
+/**
+ * The argv a scheduled run executes: this same binary, same flags, no shell.
+ *
+ * `node` comes first and the script second, both absolute. Relying on the
+ * script's `#!/usr/bin/env node` shebang looks equivalent and is not: launchd
+ * runs jobs with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and cron with something
+ * just as bare, so a Homebrew, nvm, or volta node is simply not there — the
+ * job dies at 3am with "env: node: No such file or directory" in a log nobody
+ * reads (L22). Naming the interpreter removes the lookup entirely.
+ */
+export function jobArgv(schedule: Schedule, node: string, script: string): string[] {
   return [
-    binary,
+    node,
+    script,
     ...(schedule.vault ? ['--vault', schedule.vault] : []),
     ...JOBS[schedule.job].args,
   ];
@@ -119,6 +130,24 @@ const escapeXml = (s: string): string =>
 export const supportsInstall = (): boolean => process.platform === 'darwin';
 
 /**
+ * The launchd domain to load into. Guessing a uid is worse than not running:
+ * `gui/501` is the first account on most Macs and somebody else's session on
+ * the rest, so a wrong guess either fails obscurely or schedules the job
+ * against a user who did not ask for it.
+ */
+function guiDomain(): string {
+  const uid = process.getuid?.();
+  if (uid === undefined) {
+    throw new PprError(
+      'EEXTERNAL',
+      'Cannot determine your user id, so launchd has no domain to load into',
+      'Run `ppr schedule add` from a normal user shell, or schedule the printed command with cron.',
+    );
+  }
+  return `gui/${uid}`;
+}
+
+/**
  * Writes the agent and asks launchd to pick it up.
  *
  * `bootout` first: launchd keeps a loaded copy, so rewriting the file alone
@@ -126,12 +155,12 @@ export const supportsInstall = (): boolean => process.platform === 'darwin';
  * and ignored — it usually means the job was not loaded in the first place.
  */
 export async function install(schedule: Schedule, argv: string[]): Promise<string> {
+  const target = guiDomain();
   const path = agentPath(schedule.job);
   await mkdir(join(homedir(), 'Library', 'LaunchAgents'), { recursive: true });
   await mkdir(join(homedir(), 'Library', 'Logs'), { recursive: true });
   await writeFile(path, plist(schedule, argv));
 
-  const target = `gui/${process.getuid?.() ?? 501}`;
   await run('launchctl', ['bootout', `${target}/${labelFor(schedule.job)}`]).catch(() => null);
   const loaded = await run('launchctl', ['bootstrap', target, path]);
   if (loaded.code !== 0) {
@@ -142,7 +171,7 @@ export async function install(schedule: Schedule, argv: string[]): Promise<strin
 
 export async function uninstall(job: JobName): Promise<boolean> {
   const path = agentPath(job);
-  const target = `gui/${process.getuid?.() ?? 501}`;
+  const target = guiDomain();
   await run('launchctl', ['bootout', `${target}/${labelFor(job)}`]).catch(() => null);
   try {
     await rm(path);

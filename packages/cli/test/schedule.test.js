@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isAbsolute } from 'node:path';
 import { crontabLine, jobArgv, labelFor, parseAt, plist } from '../dist/schedule.js';
 
 test('a time of day is parsed or refused, never guessed', () => {
@@ -11,19 +12,24 @@ test('a time of day is parsed or refused, never guessed', () => {
 });
 
 test('a scheduled job is an ordinary ppr command', () => {
-  assert.deepEqual(jobArgv({ job: 'learn', at: '03:00' }, '/usr/local/bin/ppr'), [
-    '/usr/local/bin/ppr',
-    'memory',
-    'learn',
-    '--quiet',
-  ]);
+  assert.deepEqual(
+    jobArgv({ job: 'learn', at: '03:00' }, '/opt/homebrew/bin/node', '/repo/dist/index.js'),
+    ['/opt/homebrew/bin/node', '/repo/dist/index.js', 'memory', 'learn', '--quiet'],
+  );
   // The vault has to be explicit: cron has no cwd worth inheriting.
-  assert.deepEqual(jobArgv({ job: 'brief', at: '08:00', vault: '~/notes' }, 'ppr'), [
-    'ppr',
-    '--vault',
-    '~/notes',
-    'brief',
-  ]);
+  assert.deepEqual(
+    jobArgv({ job: 'brief', at: '08:00', vault: '~/notes' }, '/usr/bin/node', '/repo/dist/index.js'),
+    ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief'],
+  );
+});
+
+test('a scheduled job names its interpreter instead of trusting PATH', () => {
+  const argv = jobArgv({ job: 'learn', at: '03:00' }, process.execPath, '/repo/dist/index.js');
+  // launchd runs with PATH=/usr/bin:/bin:/usr/sbin:/sbin and cron with as
+  // little; a shebang that says `env node` finds nothing there.
+  assert.ok(isAbsolute(argv[0]), `expected an absolute node path, got ${argv[0]}`);
+  assert.equal(argv[0], process.execPath);
+  assert.ok(isAbsolute(argv[1]), `expected an absolute script path, got ${argv[1]}`);
 });
 
 test('the launchd agent runs on a clock and never at load', () => {

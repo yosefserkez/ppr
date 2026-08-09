@@ -507,6 +507,18 @@ no model had ever successfully read, and they never came back. Every task that
 can both legitimately return nothing *and* fail must say which happened — hence
 `FactBatch.ok`.
 
+**L22. An enumerated environment is not your shell.** The scheduled jobs ran
+`dist/index.js` and trusted its `#!/usr/bin/env node` shebang, which works in
+every terminal and in none of the places a scheduler starts a process: launchd
+gives a job `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, cron gives it about as much,
+and a Homebrew, nvm, or volta node is on neither. Every 3am run died with
+"env: node: No such file or directory" in a log nobody reads. Anything handed
+to launchd, cron, or another program's environment names its interpreter and
+its script by absolute path — and for the same reason `--vault` is written out
+rather than inherited from a cwd that will not exist. Related: the uid fallback
+that guessed `501` is gone; `gui/501` is the first account on most Macs and
+somebody else's on the rest, and a wrong guess is worse than a clear failure.
+
 **L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
 announced once in dim text that scrolled away, with no marker showing you were
 inside a prompt at all — so people could not tell ppr's input from their

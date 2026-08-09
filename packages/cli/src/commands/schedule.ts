@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { PprError } from '@ppr/core';
 import { globals } from '../context.js';
@@ -60,7 +62,7 @@ export function scheduleCommand(): Command {
 
       const g = globals(self);
       const schedule: Schedule = { job, at, ...(g.vault ? { vault: g.vault } : {}) };
-      const argv = jobArgv(schedule, process.argv[1] ?? 'ppr');
+      const argv = jobArgv(schedule, process.execPath, entryScript());
 
       // Nothing to install into: print the line and let the user place it,
       // rather than editing a crontab behind their back.
@@ -90,6 +92,19 @@ export function scheduleCommand(): Command {
     });
 
   return cmd;
+}
+
+/**
+ * The absolute path of the script a scheduled run should execute.
+ *
+ * `process.argv[1]` is whatever was typed, so it can be relative — a path that
+ * means nothing to a job launched from `/` at 3am. Resolving it against the
+ * cwd fixes that; the module-relative fallback covers being loaded without an
+ * entry script at all.
+ */
+function entryScript(): string {
+  const argv1 = process.argv[1];
+  return argv1 ? resolve(argv1) : fileURLToPath(new URL('../index.js', import.meta.url));
 }
 
 function asJob(name: string): JobName {
