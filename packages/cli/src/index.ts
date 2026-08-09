@@ -170,14 +170,15 @@ Examples:
   ppr                                             what you wrote today
   ppr setup                                       guided setup, downloads included
   ppr "deploy failed again, rolled back to 4.2"   quick log (quoted = a note)
-  ppr + deploy failed again                       the same, without quoting
   cat notes.txt | ppr dump                        clean up a wall of text
   ppr clip https://example.com/post               save what a page says
-  ppr voice                                       record, transcribe, distill
   ppr ls                                          browse with the keyboard
   ppr search deploy --since 30d                   find it later
   ppr ask "why did we drop redis?"                answer from your own entries
   ppr recap --since 7d --style weekly             what happened
+  ppr memory learn                                keep what your entries say is true
+  ppr brief                                       what is coming up
+  ppr context redis | claude -p "what now?"       hand another tool what ppr knows
   vim $(ppr path latest)                          it is just markdown
 `,
 );
