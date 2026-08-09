@@ -21,6 +21,12 @@
  *     entries[]     {name, text} — `name` is how `from` refers back to it
  *     expect        facts / forbid / total / learned / refined / conflicts / duplicates
  *   ask[]           questions asked after the last round
+ *   remind[]        {say, now, expectDate, expectText} — one typed line read by
+ *                   `reminderFrom` against a pinned today. `expectDate: null`
+ *                   asserts that no day was read out of it.
+ *   brief           {now, items[], says[]} — dated items, then the phrasing of
+ *                   the heads-up. `says[]` is {name, all, any}: every term in
+ *                   `all`, and at least one of the term-sets in `any`.
  *
  * Counts accept a number or a [min, max] range. Ranges are for cases where a
  * defensible model could reasonably return either.
@@ -408,5 +414,123 @@ export const CASES = [
         anyMust: true,
       },
     ],
+  },
+
+  // --------------------------------------------------------------- reminders
+  //
+  // The reminder path is deterministic first: `remind.ts` reads the day out of
+  // a line with no model, and `core/test/remind.test.js` pins that half with a
+  // fixed `now`. What it cannot pin is the other half — the lines it gives up
+  // on, which are handed to a model. Every `say` below is one of those, so
+  // each case measures the prompt rather than the parser. `now` is a Saturday,
+  // which matters for the weekday case.
+  {
+    name: 'a date described by counting back from the end of a month',
+    dimension: 'reminders',
+    remind: [
+      {
+        say: 'file expenses two days before the end of the month',
+        now: '2026-08-08',
+        expectDate: '2026-08-29',
+        expectText: ['expenses'],
+      },
+    ],
+  },
+  {
+    name: 'a weekday in the middle of a sentence means the next one',
+    dimension: 'reminders',
+    remind: [
+      {
+        // Not today, and not the Monday that has gone: "on monday" is buried
+        // mid-sentence, so nothing deterministic will find it.
+        say: 'chase the invoice on monday morning before standup',
+        now: '2026-08-08',
+        expectDate: '2026-08-10',
+        expectText: ['invoice'],
+      },
+    ],
+  },
+  {
+    name: 'a duration spelled out in words is still a duration',
+    dimension: 'reminders',
+    remind: [
+      {
+        // `in 2 weeks` is arithmetic ppr does itself; `in two weeks` is not.
+        say: 'in two weeks check whether the trial licence is still needed',
+        now: '2026-08-08',
+        expectDate: '2026-08-22',
+        expectText: ['trial'],
+      },
+    ],
+  },
+  {
+    name: 'an explicit date is taken exactly, year and all',
+    dimension: 'reminders',
+    remind: [
+      {
+        say: 'send the figures for the audit on 3 March 2027, first thing',
+        now: '2026-08-08',
+        expectDate: '2027-03-03',
+        expectText: ['figures'],
+      },
+    ],
+  },
+  {
+    name: 'a line with no time in it is given no day',
+    dimension: 'reminders',
+    remind: [
+      {
+        // A guessed day is worse than none: the words are kept as a log
+        // either way, and only one of those outcomes wakes the user up on a
+        // day they never named.
+        say: 'ask Nadia about the icon set',
+        now: '2026-08-08',
+        expectDate: null,
+      },
+    ],
+  },
+  {
+    name: 'a question about the past is not a thing to be scheduled',
+    dimension: 'reminders',
+    remind: [
+      {
+        // "remind me" without a future in it. The reminder path is reached by
+        // the word, so the model is the only thing that can decline — and
+        // declining means no date, which files it as the note it always was.
+        say: 'remind me why I dropped redis',
+        now: '2026-08-08',
+        expectDate: null,
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------- brief
+  {
+    // Which items are due is arithmetic, settled before any model runs, so the
+    // only thing measurable here is the phrasing: an intention that did not
+    // happen has to be named as one, or the brief reads like a to-do list.
+    name: 'an overdue item is named as overdue, a future one counted down to',
+    dimension: 'brief',
+    brief: {
+      now: '2026-08-08',
+      items: [
+        { text: 'file the Q2 expenses', date: '2026-08-05' },
+        { text: 'renew the halyard.dev domain', date: '2026-08-20' },
+      ],
+      says: [
+        {
+          name: 'says the expenses are late',
+          all: ['expenses'],
+          any: [['overdue'], ['late'], ['days ago'], ['past due'], ['was due'], ['missed']],
+        },
+        {
+          name: 'counts down to the renewal',
+          // The name, not the word "domain": the model is free to write
+          // "renew halyard.dev", and it is the countdown being measured here.
+          all: ['halyard'],
+          any: [['12 days'], ['12'], ['two weeks'], ['20 august'], ['aug 20']],
+        },
+      ],
+    },
   },
 ];

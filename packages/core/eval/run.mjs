@@ -6,8 +6,14 @@
  * point — is not deterministic. Tests pin behaviour; this measures it, and the
  * number it prints is only comparable to the same number from another run.
  *
- *   pnpm eval                        # the configured model
- *   pnpm eval --model gpt-4o-mini    # a specific one
+ * Three shapes of case, because three things reach a model: `rounds` + `ask`
+ * drive `learn()` and `ask()`, `remind` drives `reminderFrom()` against a
+ * pinned "today", and `brief` drives `brief()` over items whose dates were
+ * already decided by arithmetic. See `cases.js` for the fields.
+ *
+ *   pnpm eval                                # the configured model
+ *   pnpm eval --model openai/gpt-4o-mini     # a specific one, spelled the way
+ *                                            # the configured endpoint spells it
  *   pnpm eval --repeat 3             # same suite three times, to see flakiness
  *   pnpm eval --dimension dates      # one dimension
  *   pnpm eval --json > runs/today.json
@@ -91,18 +97,26 @@ async function buildProvider() {
   return { provider, config };
 }
 
-/** One case, once. Returns a list of named checks with pass/fail. */
-async function runCase(testCase, provider, config) {
-  const checks = [];
-  const vault = await Vault.open({
+/** A vault of its own, so a case can pin what "today" is. */
+const openVault = (provider, config, now) =>
+  Vault.open({
     root: '/eval',
     storage: new MemoryStorage(),
     config: structuredClone(config),
     provider,
+    ...(now ? { clock: { now: () => now } } : {}),
   });
+
+/** A case's `now`, read as local noon so no timezone can move the day. */
+const fixedNow = (day) => new Date(`${day}T12:00:00`);
+
+/** One case, once. Returns a list of named checks with pass/fail. */
+async function runCase(testCase, provider, config) {
+  const checks = [];
+  const vault = await openVault(provider, config);
   const byName = new Map();
 
-  for (const [roundIndex, round] of testCase.rounds.entries()) {
+  for (const [roundIndex, round] of (testCase.rounds ?? []).entries()) {
     for (const entry of round.entries ?? []) {
       byName.set(entry.name, await vault.add({ body: entry.text, kind: 'log' }));
     }
@@ -209,6 +223,53 @@ async function runCase(testCase, provider, config) {
         ok: !containsAll(text, banned),
         detail: truncate(text),
       });
+    }
+  }
+
+  // Reminders arrive through a different door. `reminderFrom` reads the line
+  // deterministically first and asks a model only when that finds no day at
+  // all, so driving it rather than the task underneath measures what the user
+  // actually gets — including the trim on the model's own words. Every line
+  // below is one the deterministic reader gives up on; the day is pinned by
+  // the vault's clock, because an assertion about a date is worthless if it
+  // means something different tomorrow.
+  for (const reminder of testCase.remind ?? []) {
+    const said = `"${truncate(reminder.say, 44)}"`;
+    let parsed;
+    try {
+      const clocked = await openVault(provider, config, fixedNow(reminder.now));
+      parsed = await clocked.reminderFrom(reminder.say);
+    } catch (err) {
+      checks.push({ name: `reads ${said}`, ok: false, detail: String(err.message ?? err) });
+      continue;
+    }
+    checks.push({
+      name: reminder.expectDate ? `${said} is due ${reminder.expectDate}` : `${said} gets no date`,
+      ok: (parsed.date ?? null) === reminder.expectDate,
+      detail: `${parsed.date ?? 'no date'} — ${parsed.text}`,
+    });
+    if (reminder.expectText) {
+      checks.push({
+        name: `${said} keeps ${reminder.expectText.join(' + ')}`,
+        ok: containsAll(parsed.text, reminder.expectText),
+        detail: parsed.text,
+      });
+    }
+  }
+
+  // `brief` is arithmetic and then phrasing: what is due was settled offline,
+  // so the only thing a model can get wrong is the wording — whether an item
+  // that did not happen is named as overdue, and a future one by its countdown.
+  if (testCase.brief) {
+    const clocked = await openVault(provider, config, fixedNow(testCase.brief.now));
+    for (const item of testCase.brief.items) await clocked.addReminder(item.text, { date: item.date });
+    const { text } = await clocked.brief();
+    for (const wanted of testCase.brief.says) {
+      const all = containsAll(text, wanted.all ?? []);
+      // `any` is for the many honest phrasings of one thing: "3 days overdue",
+      // "3 days late", "was due on Wednesday" all say it happened and did not.
+      const any = !wanted.any || wanted.any.some((terms) => containsAll(text, terms));
+      checks.push({ name: `brief ${wanted.name}`, ok: all && any, detail: truncate(text, 160) });
     }
   }
 

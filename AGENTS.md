@@ -390,7 +390,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 236 tests. No network. No TTY required.
+pnpm test        # 240 tests. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -450,10 +450,18 @@ pnpm eval --json > runs/$(date +%F).json # a number to compare next month
 ```
 
 Dimensions: decomposition, precision, recall, provenance, dates,
-reconciliation, retrieval. A case asserts on *meaning* — a set of words that
-must appear in some fact — and every case also says what would be wrong,
-because a suite that only measures recall rewards a model that keeps
-everything.
+reconciliation, retrieval, reminders, brief. A case asserts on *meaning* — a
+set of words that must appear in some fact — and every case also says what
+would be wrong, because a suite that only measures recall rewards a model that
+keeps everything.
+
+Three case shapes, for the three doors a model comes through. `rounds` (plus
+`ask`) drive `learn()` and `ask()` on one vault. `remind` drives
+`reminderFrom()` on a line the deterministic reader in `remind.ts` gives up on
+— the only lines where a model is consulted at all — and `brief` drives
+`brief()` over items whose dates were settled by arithmetic first, so what it
+measures is the wording. Both pin "today" through the vault's `Clock`: an
+assertion about a date is worth nothing if it means something else tomorrow.
 
 `recall` is the one that carries a realistic load: eight entries, deliberately
 past `EXTRACT_CHUNK_CHARS` so the batch spans more than one extraction call.
