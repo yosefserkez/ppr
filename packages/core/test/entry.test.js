@@ -103,3 +103,58 @@ test('parseWhen understands the ways people name a moment', () => {
   assert.equal(parseWhen('gibberish', now), null);
   assert.equal(parseDuration('3w'), 3 * 7 * 86400000);
 });
+
+test('parseWhen resolves the phrases a reminder is actually typed in', () => {
+  // A Monday, so every weekday case has a known answer.
+  const now = new Date(2026, 6, 27, 15, 0, 0);
+  const day = (when) => {
+    const d = parseWhen(when, now);
+    return d && `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  for (const [input, expected] of [
+    ['tonight', '2026-07-27'],
+    ['this evening', '2026-07-27'],
+    ['tomorrow', '2026-07-28'],
+    // A bare weekday is the next one, forwards.
+    ['friday', '2026-07-31'],
+    ['fri', '2026-07-31'],
+    ['sunday', '2026-08-02'],
+    // Today is Monday: "monday" is the one coming, never the one you are in.
+    ['monday', '2026-08-03'],
+    // "next friday" says the same thing as "friday" on purpose — no reading of
+    // it surprises everybody, and two spellings that disagree surprise more.
+    ['next friday', '2026-07-31'],
+    ['this friday', '2026-07-31'],
+    ['last friday', '2026-07-24'],
+    ['last monday', '2026-07-20'],
+    ['in 3 days', '2026-07-30'],
+    ['in 1 day', '2026-07-28'],
+    ['in 2 weeks', '2026-08-10'],
+    ['in a week', '2026-08-03'],
+    ['in 6 months', '2027-01-27'],
+    ['in a year', '2027-07-27'],
+    ['next week', '2026-08-02'],
+    ['next month', '2026-08-01'],
+    ['next year', '2027-01-01'],
+    // Still the old behaviour, which the filter flags depend on.
+    ['today', '2026-07-27'],
+    ['7d', '2026-07-20'],
+    ['2026-10-20', '2026-10-20'],
+    // Not a date, however much English it is.
+    ['dentist', null],
+    ['call mum', null],
+    ['in 3 dentists', null],
+    ['someday', null],
+    ['', null],
+  ]) {
+    assert.equal(day(input), expected, `parseWhen(${JSON.stringify(input)})`);
+  }
+
+  // Month arithmetic clamps rather than overflowing: 31 January plus a month
+  // is the end of February, not the third of March.
+  const endOfJanuary = new Date(2027, 0, 31, 9, 0, 0);
+  const inAMonth = parseWhen('in 1 month', endOfJanuary);
+  assert.equal(inAMonth.getMonth(), 1);
+  assert.equal(inAMonth.getDate(), 28);
+});

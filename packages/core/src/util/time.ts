@@ -48,23 +48,108 @@ export function parseDuration(input: string): number | null {
   return n * UNIT_MS[unit]!;
 }
 
+const WEEKDAYS = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const;
+
+/** `friday` or `fri`. Nothing looser: `tues` and `thurs` are not day names. */
+function weekdayIndex(word: string): number | null {
+  const i = WEEKDAYS.findIndex((day) => day === word || day.slice(0, 3) === word);
+  return i === -1 ? null : i;
+}
+
+/**
+ * The next such weekday, never today.
+ *
+ * Said on a Friday, "friday" means the one coming, not the one you are
+ * standing in — a person with today in mind says "today". Getting this wrong
+ * in the other direction is the expensive one: a reminder that fires the
+ * moment you set it is a reminder you did not get.
+ *
+ * "next friday" resolves to the same day, deliberately. Half of English
+ * readers hear "the friday after this coming one" and half hear "the coming
+ * friday", so there is no reading that surprises nobody — and the one that
+ * surprises least is the one where two spellings of a phrase agree. Someone
+ * who means the week after can say `in 2 weeks` or name the date.
+ */
+const nextWeekday = (now: Date, target: number): Date =>
+  startOfDay(addDays(now, ((target - now.getDay() + 7) % 7) || 7));
+
+/** The most recent such weekday, never today — the mirror of `nextWeekday`. */
+const lastWeekday = (now: Date, target: number): Date =>
+  startOfDay(addDays(now, -(((now.getDay() - target + 7) % 7) || 7)));
+
+const daysInMonth = (year: number, month: number): number =>
+  new Date(year, month + 1, 0).getDate();
+
+/** 31 January plus one month is 28 February. JS overflows into March; people do not. */
+function addMonths(d: Date, n: number): Date {
+  const out = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  out.setDate(Math.min(d.getDate(), daysInMonth(out.getFullYear(), out.getMonth())));
+  return out;
+}
+
+/** `in 3 days`, `in 2 weeks`, `in a month`. Forward only; `ago` is the other half. */
+const IN_N = /^in\s+(?:(\d{1,4})|an?)\s+(day|week|month|year)s?$/;
+
 /**
  * Resolves the many ways a human names a moment:
- * `today`, `yesterday`, `7d` (ago), `2026-07-01`, `2026-07-01T09:00`, `last week`.
+ * `today`, `tomorrow`, `yesterday`, `7d` (ago), `2026-07-01`, `2026-07-01T09:00`,
+ * `last week`, `next month`, `friday`, `next friday`, `in 3 days`, `tonight`.
  * Bare durations and bare day-names resolve to the *start* of that period.
+ *
+ * A bare weekday resolves *forwards*, because the commands that take one are
+ * the forward-looking ones; `last friday` is how you reach back. Everything
+ * here is deterministic and dependency-free on purpose — a date library would
+ * be a fourth dependency to save arithmetic that fits on a screen, and would
+ * still not know what "next friday" means to this user.
  */
 export function parseWhen(input: string, now: Date = new Date()): Date | null {
   const raw = input.trim().toLowerCase();
   if (!raw) return null;
   if (raw === 'now') return now;
   if (raw === 'today') return startOfDay(now);
+  // Days are the unit ppr stores, so an hour of the evening is still today.
+  if (raw === 'tonight' || raw === 'this evening') return startOfDay(now);
   if (raw === 'yesterday') return startOfDay(addDays(now, -1));
   if (raw === 'tomorrow') return startOfDay(addDays(now, 1));
   if (raw === 'week' || raw === 'this week') return startOfDay(addDays(now, -now.getDay()));
   if (raw === 'last week') return startOfDay(addDays(now, -now.getDay() - 7));
+  if (raw === 'next week') return startOfDay(addDays(now, 7 - now.getDay()));
   if (raw === 'month' || raw === 'this month')
     return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (raw === 'next month') return new Date(now.getFullYear(), now.getMonth() + 1, 1);
   if (raw === 'year' || raw === 'this year') return new Date(now.getFullYear(), 0, 1);
+  if (raw === 'next year') return new Date(now.getFullYear() + 1, 0, 1);
+
+  const counted = IN_N.exec(raw);
+  if (counted) {
+    const n = counted[1] ? Number(counted[1]) : 1;
+    switch (counted[2]) {
+      case 'day':
+        return startOfDay(addDays(now, n));
+      case 'week':
+        return startOfDay(addDays(now, n * 7));
+      case 'month':
+        return startOfDay(addMonths(now, n));
+      default:
+        return startOfDay(addMonths(now, n * 12));
+    }
+  }
+
+  const named = /^(?:(next|this|last)\s+)?([a-z]+)$/.exec(raw);
+  if (named) {
+    const day = weekdayIndex(named[2]!);
+    if (day !== null) {
+      return named[1] === 'last' ? lastWeekday(now, day) : nextWeekday(now, day);
+    }
+  }
 
   const ago = /^(.+?)\s+ago$/.exec(raw);
   const durationText = ago ? ago[1]! : raw;
