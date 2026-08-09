@@ -273,6 +273,46 @@ async function runCase(testCase, provider, config) {
     }
   }
 
+  // A thread is a graph walk and then a telling. The walk is deterministic and
+  // pinned by unit tests, so what is driven here is `threadRecap` over a real
+  // thread — dated across months, with today pinned, because "picked it up
+  // again after six months" is unsayable without both.
+  if (testCase.thread) {
+    const clocked = await openVault(provider, config, fixedNow(testCase.thread.now));
+    for (const entry of testCase.thread.entries) {
+      await clocked.add({
+        body: entry.text,
+        title: entry.title,
+        kind: 'log',
+        created: `${entry.day}T09:00:00`,
+      });
+    }
+    const thread = clocked.thread(testCase.thread.query);
+    checks.push({
+      name: `thread holds ${testCase.thread.entries.length} entries`,
+      ok: thread.entries.length === testCase.thread.entries.length,
+      detail: thread.entries.map((m) => m.entry.title).join(' | ') || '(none)',
+    });
+
+    const { text, ai } = await clocked.threadRecap(thread);
+    if (!ai) {
+      checks.push({ name: 'thread: the model was understood', ok: false, detail: truncate(text, 160) });
+    } else {
+      for (const wanted of testCase.thread.says) {
+        const all = containsAll(text, wanted.all ?? []);
+        const any = !wanted.any || wanted.any.some((terms) => containsAll(text, terms));
+        checks.push({ name: `thread ${wanted.name}`, ok: all && any, detail: truncate(text, 200) });
+      }
+      for (const banned of testCase.thread.mustNot ?? []) {
+        checks.push({
+          name: `does not advise ${banned.join(' + ')}`,
+          ok: !containsAll(text, banned),
+          detail: truncate(text, 200),
+        });
+      }
+    }
+  }
+
   return checks;
 }
 

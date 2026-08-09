@@ -27,6 +27,12 @@
  *   brief           {now, items[], says[]} — dated items, then the phrasing of
  *                   the heads-up. `says[]` is {name, all, any}: every term in
  *                   `all`, and at least one of the term-sets in `any`.
+ *   thread          {now, entries[], query, says[], mustNot[]} — entries dated
+ *                   across months, then `thread()` walked and `threadRecap()`
+ *                   asked for the story of it. Which entries are on the thread
+ *                   is arithmetic and pinned by unit tests, so what is measured
+ *                   here is the telling: does it end where the thinking left
+ *                   off.
  *
  * Counts accept a number or a [min, max] range. Ranges are for cases where a
  * defensible model could reasonably return either.
@@ -539,6 +545,65 @@ export const CASES = [
           any: [['12 days'], ['12'], ['two weeks'], ['20 august'], ['aug 20']],
         },
       ],
+    },
+  },
+
+  // ------------------------------------------------------------------ thread
+  {
+    // Which entries are on the thread is a graph walk, settled before any
+    // model runs and pinned by `core/test/thread.test.js`. What only a model
+    // can do is say where the thinking *stopped* — and a model handed five
+    // notes summarises the five notes unless the prompt insists otherwise.
+    // That is the whole thing being measured here.
+    name: 'the story of a thread ends on its open question',
+    dimension: 'thread',
+    thread: {
+      now: '2026-08-08',
+      query: 'coffee subscription',
+      entries: [
+        {
+          day: '2025-10-06',
+          title: 'Coffee subscription idea',
+          text: 'Idea: a monthly subscription shipping office-sized bags to small studios. Nobody near here does it well.',
+        },
+        {
+          day: '2025-10-21',
+          title: 'Talked to a roaster',
+          text: 'The roaster on Mare Street would white-label the [[Coffee subscription idea]] at 40 bags a month.',
+        },
+        {
+          day: '2025-11-19',
+          title: 'Shelving the coffee idea',
+          text: 'Parking it. Did the numbers after [[Talked to a roaster]]: the margin only works above 200 subscribers and I have no way to reach 200.',
+        },
+        {
+          day: '2026-05-14',
+          title: 'Back to the coffee idea',
+          text: 'Two studios asked where I get my beans. Reopening [[Shelving the coffee idea]] — maybe studios referring studios solves the reach problem.',
+        },
+        {
+          day: '2026-06-02',
+          title: 'Where the coffee idea stands',
+          text: 'After [[Back to the coffee idea]] the open question is whether referrals get me to 200 subscribers without paid acquisition.',
+        },
+      ],
+      says: [
+        {
+          name: 'ends on the question that is still open',
+          all: ['referrals'],
+          any: [['200'], ['paid acquisition'], ['acquisition']],
+        },
+        {
+          // Six months of silence in the middle is half of why the thread is
+          // worth reading. A model given the dates and today should say so.
+          name: 'notices the thread was put down and picked up',
+          any: [['months'], ['november'], ['may'], ['half a year'], ['2025']],
+        },
+      ],
+      // Advice is the failure mode. Everything here is a route to market the
+      // entries never mention, and a story that suggests one has stopped
+      // telling the user what they wrote and started writing it for them.
+      mustNot: [['instagram'], ['kickstarter'], ['influencer'], ['you should']],
     },
   },
 ];
