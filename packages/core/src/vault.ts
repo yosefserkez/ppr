@@ -487,7 +487,7 @@ export class Vault {
 
     return this.facts()
       .map((fact) => nextOccurrence(fact, now))
-      .filter((o): o is Occurrence => Boolean(o) && o!.days <= within)
+      .filter((o): o is Occurrence => o !== null && o.days <= within)
       .sort((a, b) => a.days - b.days)
       .map((occurrence) => ({ ...occurrence, mentions: this.mentionsSince(occurrence) }));
   }
@@ -552,19 +552,8 @@ export class Vault {
     const keep = toFact(this.catalog.resolve(keepId));
     const drop = toFact(this.catalog.resolve(dropId));
 
-    const retired = await this.update(
-      drop.id,
-      this.factPatch({
-        ...drop,
-        status: 'retired',
-        supersededBy: keep.id,
-        conflicts: drop.conflicts.filter((id) => id !== keep.id),
-      }),
-    );
-    const kept = await this.update(
-      keep.id,
-      this.factPatch({ ...keep, conflicts: keep.conflicts.filter((id) => id !== drop.id) }),
-    );
+    const retired = await this.unlink(drop, keep.id, { status: 'retired', supersededBy: keep.id });
+    const kept = await this.unlink(keep, drop.id);
     return { kept, retired };
   }
 
@@ -572,10 +561,21 @@ export class Vault {
   async keepBoth(aId: string, bId: string): Promise<[Entry, Entry]> {
     const a = toFact(this.catalog.resolve(aId));
     const b = toFact(this.catalog.resolve(bId));
-    return [
-      await this.update(a.id, this.factPatch({ ...a, conflicts: a.conflicts.filter((id) => id !== b.id) })),
-      await this.update(b.id, this.factPatch({ ...b, conflicts: b.conflicts.filter((id) => id !== a.id) })),
-    ];
+    return [await this.unlink(a, b.id), await this.unlink(b, a.id)];
+  }
+
+  /**
+   * Drops one conflict pointer, keeping everything else the fact says.
+   *
+   * The pointer has to go on both sides or the pair keeps arriving in
+   * `ppr memory review` as an open question, which is why every way of
+   * settling one goes through here rather than writing the filter out again.
+   */
+  private unlink(fact: Fact, otherId: string, also: Parameters<typeof factExtra>[0] = {}): Promise<Entry> {
+    return this.update(
+      fact.id,
+      this.factPatch({ ...fact, conflicts: fact.conflicts.filter((id) => id !== otherId), ...also }),
+    );
   }
 
   /** Records a fact the user wrote themselves. Nothing automatic rewrites it. */

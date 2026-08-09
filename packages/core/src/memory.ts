@@ -16,7 +16,7 @@
  * a fact stays readable in Obsidian, in `cat`, and in a diff.
  */
 
-import { MEMORY_KIND, type Entry } from './types.js';
+import type { Entry } from './types.js';
 import { slugify } from './util/text.js';
 
 export const MEMORY_DIR = 'memory';
@@ -78,15 +78,21 @@ const asIdList = (v: unknown): string[] => {
   return [];
 };
 
-export const isFact = (entry: Entry): boolean => entry.kind === MEMORY_KIND;
+/**
+ * The fact itself, out of a memory's body.
+ *
+ * First line only: a hand-edited file may have grown a note underneath it, and
+ * that is the author's business, not the index's. Everything that renders,
+ * prompts with, or compares a fact goes through here, so none of them can
+ * disagree about where the fact ends.
+ */
+export const factText = (body: string): string => body.split('\n')[0]?.trim() ?? '';
 
 /** Reads the memory frontmatter off an entry. Absence always has a meaning. */
 export function toFact(entry: Entry): Fact {
   const fact: Fact = {
     id: entry.id,
-    // The body is the fact. First line only: a hand-edited file may have grown
-    // a note underneath, and that is the author's business, not the index's.
-    text: entry.body.split('\n')[0]?.trim() ?? '',
+    text: factText(entry.body),
     from: asIdList(entry.extra.from),
     origin: entry.source === 'manual' ? 'manual' : 'learned',
     status: entry.extra.status === 'retired' ? 'retired' : 'current',

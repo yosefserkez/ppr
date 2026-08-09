@@ -1,7 +1,7 @@
 import type { AIProvider } from '../ports.js';
 import type { Entry } from '../types.js';
 import { PprError } from '../errors.js';
-import { factKey, parseFactDate, type FactRecurrence } from '../memory.js';
+import { factKey, factText, parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
 import { formatDay } from '../util/time.js';
@@ -185,7 +185,7 @@ Rules:
 
 /** Facts rendered for a model: id-tagged, so an answer can cite one. */
 const factBlock = (facts: Entry[]): string =>
-  facts.map((f) => `[${f.id}] ${f.body.split('\n')[0]}`).join('\n');
+  facts.map((f) => `[${f.id}] ${factText(f.body)}`).join('\n');
 
 export async function ask(
   question: string,
@@ -196,7 +196,7 @@ export async function ask(
 
   if (!opts.provider) {
     const lines = [
-      facts.length ? `What ppr knows:\n\n${facts.map((f) => `- [${shortId(f.id)}] ${f.body.split('\n')[0]}`).join('\n')}` : '',
+      facts.length ? `What ppr knows:\n\n${facts.map((f) => `- [${shortId(f.id)}] ${factText(f.body)}`).join('\n')}` : '',
       entries.length
         ? `Closest entries:\n\n${entries.map((e) => `- [${shortId(e.id)}] ${e.title}`).join('\n')}`
         : '',

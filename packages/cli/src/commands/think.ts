@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import {
+  factText,
   formatDay,
   heuristicBrief,
   parseWhen,
@@ -7,7 +8,6 @@ import {
   relativeAge,
   toFact,
   truncate,
-  type Entry,
   type Fact,
   type LearnResult,
   type UpcomingFact,
@@ -209,7 +209,7 @@ export function askCommand(): Command {
           // Facts first: they are current, and an entry may have been
           // superseded by one of them.
           for (const fact of result.facts.slice(0, 10)) {
-            out(`  ${color.dim(shortId(fact.id))}  ${color.yellow('fact')}  ${truncate(firstLine(fact), 60)}`);
+            out(`  ${color.dim(shortId(fact.id))}  ${color.yellow('fact')}  ${truncate(factText(fact.body), 60)}`);
           }
           for (const entry of result.used.slice(0, 10)) {
             out(
@@ -300,11 +300,11 @@ export function memoryCommand(): Command {
           });
         }
 
-        for (const entry of result.learned) out(`${color.green('+')} ${firstLine(entry)}`);
-        for (const entry of result.refined) out(`${color.cyan('~')} ${firstLine(entry)}`);
+        for (const entry of result.learned) out(`${color.green('+')} ${factText(entry.body)}`);
+        for (const entry of result.refined) out(`${color.cyan('~')} ${factText(entry.body)}`);
         for (const { fact, with: other } of result.conflicts) {
-          out(`${color.yellow('!')} ${firstLine(fact)}`);
-          out(`  ${color.dim(`disagrees with ${shortId(other.id)}: ${firstLine(other)}`)}`);
+          out(`${color.yellow('!')} ${factText(fact.body)}`);
+          out(`  ${color.dim(`disagrees with ${shortId(other.id)}: ${factText(other.body)}`)}`);
         }
         if (g.quiet) return;
         errline(color.dim(summarise(result)));
@@ -393,8 +393,6 @@ export function memoryCommand(): Command {
 
 /** What `ppr memory review` can do with a disagreeing pair. */
 type Resolution = { keep: string; drop: string } | 'both' | 'skip';
-
-const firstLine = (entry: Entry): string => entry.body.split('\n')[0] ?? '';
 
 /** Stable projection of a fact, so scripts can depend on the shape. */
 const factJson = (fact: Fact) => ({
