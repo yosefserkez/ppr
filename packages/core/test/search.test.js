@@ -127,6 +127,51 @@ test('config flattens to dotted keys for display', () => {
   assert.equal(flat['capture.distill'], true);
 });
 
+test('a plugin keeps its settings where the user already looks', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  const set = setPath(config, 'plugins.reminders-push.list', 'Errands');
+
+  assert.equal(getPath(set, 'plugins.reminders-push.list'), 'Errands');
+  // Round-trips into the flat view `ppr config list` prints, so a plugin's
+  // settings are discoverable without knowing they exist.
+  assert.equal(Object.fromEntries(flattenConfig(set))['plugins.reminders-push.list'], 'Errands');
+  // No schema here on purpose: ppr cannot know what is installed.
+  const more = setPath(set, 'plugins.reminders-push.hour', '9');
+  assert.equal(getPath(more, 'plugins.reminders-push.hour'), '9');
+  assert.equal(getPath(more, 'plugins.reminders-push.list'), 'Errands');
+
+  // And nothing else got loose with it (L5).
+  assert.throws(() => setPath(config, 'made.up.key', 'x'), /Unknown config/);
+  assert.throws(() => setPath(config, 'display.colour', 'true'), /Unknown config key/);
+  // A plugin needs a name to keep its settings under.
+  assert.throws(() => setPath(config, 'plugins.foo', 'bar'), /plugins\.<plugin>\.<key>/);
+});
+
+test('a secret is refused under plugins too, because a vault is in git', () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  const secret = 'sk-live-2f45c9a5de610d3475826159ea58892955b79aa98026cc73';
+
+  for (const key of [
+    'plugins.todoist.token',
+    'plugins.todoist.apiKey',
+    'plugins.todoist.api_key',
+    'plugins.thing.password',
+    'plugins.thing.secret',
+  ]) {
+    assert.throws(() => setPath(config, key, secret), (err) => {
+      assert.match(err.message, /a config file is not one/);
+      assert.match(err.hint, /environment variable/, 'the hint is the next thing to type');
+      return true;
+    });
+  }
+
+  // The *name* of a variable is exactly what may be stored — and the same
+  // mistake one level down is caught the same way (I7).
+  const named = setPath(config, 'plugins.todoist.tokenEnv', 'TODOIST_TOKEN');
+  assert.equal(getPath(named, 'plugins.todoist.tokenEnv'), 'TODOIST_TOKEN');
+  assert.throws(() => setPath(config, 'plugins.todoist.tokenEnv', secret), /name of an environment variable/);
+});
+
 test('compose mode is validated like any other setting', () => {
   const config = structuredClone(DEFAULT_CONFIG);
   assert.equal(config.capture.compose, 'editor', 'the editor is the default');

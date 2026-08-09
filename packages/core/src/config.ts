@@ -74,6 +74,21 @@ export interface Config {
      */
     push: boolean;
   };
+  /**
+   * Settings belonging to tools ppr has never heard of.
+   *
+   * The one namespace with no schema, on purpose: a plugin needs somewhere to
+   * keep "which Reminders list" or "how loud" that survives a reinstall and
+   * that the user finds where they already look. `ppr config get
+   * plugins.foo.bar` is the read path, or the JSON file itself for anything
+   * that would rather not shell out.
+   *
+   * Everything else stays strict (L5): a typo in `ai.provider` is a mistake
+   * worth refusing, while a key under `plugins.` is by definition a key ppr
+   * does not know. Secrets are still refused here — this file is read by
+   * `<vault>/.ppr/config.json` too, and a vault is assumed to be in git (I7).
+   */
+  plugins: Record<string, Record<string, unknown>>;
   display: {
     color: boolean;
     /** Entries shown by `ppr ls` with no --limit. */
@@ -105,6 +120,7 @@ export const DEFAULT_CONFIG: Config = {
     compose: 'editor',
   },
   remind: { push: false },
+  plugins: {},
   display: { color: true, listLimit: 20, interactive: true },
 };
 
@@ -234,21 +250,37 @@ export function setPath(config: Config, path: string, raw: string): Config {
   if (!leaf) throw invalid('Empty config path');
 
   const clone = structuredClone(config) as unknown as Json;
+  // The one namespace ppr does not police. Everywhere else, an unknown key is
+  // a typo and refusing it is the feature (L5) — under `plugins.` an unknown
+  // key is the *point*, because ppr does not know what is installed.
+  const plugin = keys[0] === PLUGIN_NS;
+  if (plugin && keys.length < 2) {
+    throw invalid(
+      `A plugin's settings live under ${PLUGIN_NS}.<plugin>.<key>`,
+      `Example: ppr config set ${PLUGIN_NS}.reminders-push.list Errands`,
+    );
+  }
+
   let node: Json = clone;
   for (const key of keys) {
     const next = node[key];
     if (!isPlainObject(next)) {
-      throw invalid(`Unknown config section: ${keys.join('.')}`, 'Run `ppr config list` to see valid keys.');
+      if (!plugin) {
+        throw invalid(`Unknown config section: ${keys.join('.')}`, 'Run `ppr config list` to see valid keys.');
+      }
+      node[key] = {};
     }
-    node = next;
+    node = node[key] as Json;
   }
   const current = getPath(config, path);
-  if (current === undefined && !(leaf in node) && !OPTIONAL.has(path)) {
+  if (!plugin && current === undefined && !(leaf in node) && !OPTIONAL.has(path)) {
     throw invalid(`Unknown config key: ${path}`, 'Run `ppr config list` to see valid keys.');
   }
   node[leaf] = coerce(raw, current);
   return validateConfig(clone as unknown as Config);
 }
+
+const PLUGIN_NS = 'plugins';
 
 /** The keys people reach for when they mean "put my key here", and the answer. */
 const KEY_VALUE_PATHS = new Set([
@@ -261,11 +293,36 @@ const KEY_VALUE_PATHS = new Set([
 ]);
 
 /**
- * No config write may end with a live key on disk. Both shapes of the mistake
- * are caught here, in the one function `ppr config set` and every guided repair
- * go through, so neither can quietly grow its own way in.
+ * Key names that mean "a secret goes here", whoever owns the namespace.
+ *
+ * ppr can police its own keys by listing them; a plugin's keys it has never
+ * seen, so the only signal left is the name the author chose — and every
+ * author calls it `token`, `apiKey`, or `password`. `tokenEnv` is deliberately
+ * outside this: naming the variable is exactly the thing we want people doing.
+ */
+const SECRET_KEY = /\.(api[-_]?key|key|token|secret|password|passwd|credentials?)$/i;
+
+/**
+ * No config write may end with a live key on disk. Every shape of the mistake
+ * is caught here, in the one function `ppr config set` and every guided repair
+ * go through, so none of them can quietly grow its own way in.
  */
 function guardSecret(path: string, raw: string): void {
+  // A plugin's config merges through the vault layer, and a vault is assumed
+  // to be in git (I7). "It is only my Todoist token" is how a token gets
+  // pushed to a public repo.
+  if (path.startsWith(`${PLUGIN_NS}.`) && SECRET_KEY.test(path)) {
+    throw invalid(
+      `${path} is a place people put secrets, and a config file is not one`,
+      `Keep the key in an environment variable and store its *name*: ${path}Env=MY_TOKEN.`,
+    );
+  }
+  if (path.startsWith(`${PLUGIN_NS}.`) && /Env$/.test(path) && raw && looksLikeSecret(raw)) {
+    throw invalid(
+      `${path} takes the name of an environment variable, not the value`,
+      'Export the value in your shell and put the variable name here.',
+    );
+  }
   if (KEY_VALUE_PATHS.has(path)) {
     throw invalid(
       `There is no ${path} setting — an API key never goes in a config file`,

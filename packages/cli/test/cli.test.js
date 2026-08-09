@@ -219,6 +219,29 @@ test('config writes to the vault layer with --local', async () => {
   });
 });
 
+test('a plugin gets a place to keep its settings, and not its secrets', async () => {
+  await withVault(async (dir) => {
+    const set = await ppr(dir, ['config', 'set', 'plugins.reminders-push.list', 'Errands']);
+    assert.equal(set.code, 0);
+
+    // The read path a plugin in any language can use: one command, one value.
+    const get = await ppr(dir, ['config', 'get', 'plugins.reminders-push.list']);
+    assert.equal(get.stdout.trim(), 'Errands');
+    const list = await ppr(dir, ['config', 'list']);
+    assert.match(list.stdout, /plugins\.reminders-push\.list\s+Errands/);
+
+    // Or the file itself, for something that would rather not shell out.
+    const file = JSON.parse(await readFile(join(dir, '.xdg', 'ppr', 'config.json'), 'utf8'));
+    assert.equal(file.plugins['reminders-push'].list, 'Errands');
+
+    // A token is refused here as firmly as anywhere else: this file has a
+    // vault-layer twin, and a vault is assumed to be in git (I7).
+    const secret = await ppr(dir, ['config', 'set', 'plugins.todoist.token', 'sk-live-abc123def456']);
+    assert.equal(secret.code, 2);
+    assert.match(secret.stderr, /config file is not one/);
+  });
+});
+
 test('doctor reports without a vault instead of crashing', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ppr-empty-'));
   try {
