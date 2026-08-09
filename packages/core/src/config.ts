@@ -244,6 +244,7 @@ export function getPath(config: Config, path: string): unknown {
  * so `ppr config set display.color false` does not store the string "false".
  */
 export function setPath(config: Config, path: string, raw: string): Config {
+  guardHooks(path);
   guardSecret(path, raw);
   const keys = path.split('.');
   const leaf = keys.pop();
@@ -291,6 +292,24 @@ const KEY_VALUE_PATHS = new Set([
   'transcribe.api_key',
   'transcribe.key',
 ]);
+
+/**
+ * `hooks` is not a config key, and this is where that is said out loud.
+ *
+ * It is a list of shell commands, and config merges the vault layer over the
+ * user's — so a `hooks` block anywhere near this type would mean cloning
+ * somebody's vault and typing `ppr ls` runs their shell. It is read from
+ * `~/.config/ppr/config.json` alone, by the CLI, and `--local` has to be
+ * impossible rather than discouraged. Editing that file by hand is the whole
+ * interface; refusing here is how someone finds that out.
+ */
+function guardHooks(path: string): void {
+  if (path !== 'hooks' && !path.startsWith('hooks.')) return;
+  throw invalid(
+    'Hooks are not settable with `ppr config set`',
+    'They run shell commands, so ppr reads them only from ~/.config/ppr/config.json — edit that file.',
+  );
+}
 
 /**
  * Key names that mean "a secret goes here", whoever owns the namespace.
@@ -367,6 +386,10 @@ function trimStrings(node: Json): void {
 
 export function validateConfig(config: Config): Config {
   trimStrings(config as unknown as Json);
+  // A `hooks` block that arrived through a merge is dropped here, so no code
+  // downstream can find one to honour. The vault layer wins every other key
+  // by design, and a vault is a repo people clone — see `cli/src/hooks.ts`.
+  delete (config as unknown as Json).hooks;
   if (config.capture.compose !== 'editor' && config.capture.compose !== 'inline') {
     throw invalid(
       `Unknown compose mode: ${config.capture.compose}`,

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -239,6 +240,107 @@ test('a plugin gets a place to keep its settings, and not its secrets', async ()
     const secret = await ppr(dir, ['config', 'set', 'plugins.todoist.token', 'sk-live-abc123def456']);
     assert.equal(secret.code, 2);
     assert.match(secret.stderr, /config file is not one/);
+  });
+});
+
+/** An executable shell script, for the tests that need a real subprocess. */
+async function writeScript(dir, name, body) {
+  await mkdir(join(dir, 'bin'), { recursive: true });
+  const path = join(dir, 'bin', name);
+  await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return `"${path}"`;
+}
+
+/** The *user* config layer — the only place a hook is ever honoured from. */
+async function writeUserConfig(dir, data) {
+  await mkdir(join(dir, '.xdg', 'ppr'), { recursive: true });
+  await writeFile(join(dir, '.xdg', 'ppr', 'config.json'), JSON.stringify(data, null, 2));
+}
+
+test('a hook is handed the whole event, on stdin and in its environment', async () => {
+  await withVault(async (dir) => {
+    const seen = join(dir, 'seen.json');
+    const hook = await writeScript(dir, 'record', `cat > "${seen}"\necho "$PPR_EVENT|$PPR_VAULT" > "${seen}.env"`);
+    await writeUserConfig(dir, { hooks: { 'entry.created': [hook] } });
+
+    const { code } = await ppr(dir, ['+', 'shipped the migration']);
+    assert.equal(code, 0);
+
+    const event = JSON.parse(await readFile(seen, 'utf8'));
+    assert.equal(event.event, 'entry.created');
+    assert.equal(event.v, 1, 'the payload says which version it is');
+    assert.equal(event.vault, dir);
+    // Data-complete: a hook never has to call back into ppr to find out what
+    // it was just told about.
+    assert.equal(event.entry.body, 'shipped the migration');
+    assert.equal(event.entry.kind, 'log');
+    assert.ok(event.entry.id && event.entry.path);
+
+    assert.equal((await readFile(`${seen}.env`, 'utf8')).trim(), `entry.created|${dir}`);
+  });
+});
+
+test('a hook declared by a vault is never run, however the vault got there', async () => {
+  await withVault(async (dir) => {
+    const marker = join(dir, 'stranger-was-here');
+    const hook = await writeScript(dir, 'stranger', `touch "${marker}"`);
+    // The shape of a cloned repo: the vault's own config layer asks for it,
+    // and the vault layer wins every other key in ppr.
+    await writeFile(
+      join(dir, '.ppr', 'config.json'),
+      JSON.stringify({ hooks: { 'entry.created': [hook], 'entry.updated': [hook] } }),
+    );
+
+    assert.equal((await ppr(dir, ['+', 'a note'])).code, 0);
+    assert.equal((await ppr(dir, ['ls'])).code, 0);
+    assert.equal(existsSync(marker), false, 'cloning a vault must not run its shell');
+
+    // Not merged into the config either, so nothing downstream can find one.
+    const config = JSON.parse((await ppr(dir, ['config', 'list', '--json'])).stdout);
+    assert.equal(config.hooks, undefined);
+
+    // And `config set` sends people to the file rather than pretending.
+    const set = await ppr(dir, ['config', 'set', 'hooks.entry.created', 'echo hi']);
+    assert.equal(set.code, 2);
+    assert.match(set.stderr, /~\/\.config\/ppr\/config\.json/);
+
+    // The same declaration, moved to the user's own file, does run — so what
+    // is asserted above is the layer it came from and not a broken fixture.
+    await writeUserConfig(dir, { hooks: { 'entry.created': [hook] } });
+    assert.equal((await ppr(dir, ['+', 'another note'])).code, 0);
+    assert.equal(existsSync(marker), true, 'a hook you wrote yourself still runs');
+  });
+});
+
+test('a hook that hangs does not hang the command', async () => {
+  await withVault(async (dir) => {
+    const marker = join(dir, 'eventually');
+    const hook = await writeScript(dir, 'slow', `sleep 30\ntouch "${marker}"`);
+    await writeUserConfig(dir, { hooks: { 'entry.created': [hook] } });
+
+    const started = Date.now();
+    const { code, stderr } = await ppr(dir, ['+', 'a note']);
+    const elapsed = Date.now() - started;
+
+    assert.equal(code, 0, 'a slow courier is not a failed write');
+    assert.ok(elapsed < 15_000, `waited ${elapsed}ms for a hook that sleeps 30s`);
+    assert.match(stderr, /still running/, 'and it said so, on stderr');
+    assert.equal(existsSync(marker), false, 'the hook was left to finish on its own');
+  });
+});
+
+test('a hook that fails costs one line, not the exit code and not stdout', async () => {
+  await withVault(async (dir) => {
+    const hook = await writeScript(dir, 'broken', `echo "garbage on stdout"\necho "no thanks" >&2\nexit 3`);
+    await writeUserConfig(dir, { hooks: { 'entry.created': [hook, 'ppr-definitely-not-installed'] } });
+
+    const { code, stdout, stderr } = await ppr(dir, ['--json', '+', 'a note']);
+    assert.equal(code, 0, 'the entry is written; a hook is not part of the write');
+    assert.match(stderr, /hook entry\.created: no thanks/);
+    assert.match(stderr, /hook entry\.created: .*not found/i);
+    // Whatever a hook prints is its own business, never ppr's output (I10).
+    assert.ok(JSON.parse(stdout).id);
+    assert.doesNotMatch(stdout, /garbage/);
   });
 });
 

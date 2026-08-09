@@ -13,6 +13,7 @@ import { createTranscriber } from './node/transcribe.js';
 import { findVault, loadConfig, loadSecrets } from './node/paths.js';
 import { noVault } from './errors.js';
 import type { AIProvider } from './ports.js';
+import type { VaultEvent } from './events.js';
 import type { Config } from './config.js';
 import type { SecretSource } from './ai/providers.js';
 
@@ -79,6 +80,8 @@ export interface OpenVaultOptions {
   noAI?: boolean;
   /** Throw if the vault has not been initialised yet. Default true. */
   requireVault?: boolean;
+  /** Told about every write. See `VaultOptions.onEvent`. */
+  onEvent?: (event: VaultEvent) => void;
 }
 
 /** One call to go from a shell invocation to a working `Vault`. */
@@ -107,6 +110,7 @@ export async function openVault(opts: OpenVaultOptions = {}): Promise<Vault> {
     config,
     provider,
     transcriber,
+    ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
   });
 }
 

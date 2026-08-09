@@ -1,6 +1,8 @@
 import type { Command } from 'commander';
 import { type Vault, type ListQuery, asDay, futureWhen, parseWhen, PprError } from '@ppr/core';
 import { openVault } from '@ppr/core/node';
+import { drainChildren } from './child.js';
+import { hookRunner, loadHooks } from './hooks.js';
 import { setColor } from './render.js';
 
 export interface GlobalOptions {
@@ -80,18 +82,26 @@ export function globals(_cmd?: Command): GlobalOptions {
 /**
  * Opens the vault for a command. Commands never construct a Vault themselves,
  * so `--vault` and `--no-ai` behave identically everywhere.
+ *
+ * This is also where ppr's push surface is wired: hooks listen to the vault's
+ * events, and `drainChildren()` in the `finally` is the one bounded wait for
+ * everything they, and the plugin-backed flags, started. Both are no-ops when
+ * nothing is configured, which is the usual case.
  */
 export async function withVault<T>(_cmd: Command, fn: (vault: Vault) => Promise<T>): Promise<T> {
   const opts = globals();
   setColor(opts.color !== false && !opts.json);
+  const onEvent = hookRunner(await loadHooks());
   const vault = await openVault({
     ...(opts.vault ? { vault: opts.vault } : {}),
     ...(opts.ai === false ? { noAI: true } : {}),
+    ...(onEvent ? { onEvent } : {}),
   });
   try {
     return await fn(vault);
   } finally {
     await vault.close();
+    await drainChildren();
   }
 }
 

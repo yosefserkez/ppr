@@ -1,0 +1,96 @@
+/**
+ * Hooks: run my command when ppr writes something.
+ *
+ *   "hooks": { "entry.created": ["ppr-reminders-push"] }
+ *
+ * This is the general mechanism behind ppr's whole push surface. The command
+ * gets the event as JSON on stdin — the same shape `ppr ls --json` prints, one
+ * serializer (`eventJson`) — plus `PPR_EVENT` and `PPR_VAULT` in its
+ * environment, so a two-line shell script is a legitimate consumer.
+ *
+ * ## The security rule, which is invariant-grade
+ *
+ * **Hooks are read from `~/.config/ppr/config.json` and from nowhere else.**
+ * Never from `<vault>/.ppr/config.json`, whatever it says.
+ *
+ * Config merges three layers and the vault layer wins (§5), which is exactly
+ * right for `display.listLimit` and catastrophic for a list of shell commands:
+ * a vault is a git repo people are encouraged to clone and share, so honouring
+ * a vault-declared hook would mean `git clone && ppr ls` executes a stranger's
+ * shell. Git learned this the hard way and its answer is the same as ours —
+ * hooks live in `.git/hooks` and do not clone.
+ *
+ * The enforcement is structural rather than a check: `hooks` is not a field on
+ * `Config` at all, `validateConfig` deletes any that a merge produced, and the
+ * only reader is `readConfigLayer(globalConfigPath())` right here. There is no
+ * merged config to read one out of by mistake, and `ppr config set hooks.…`
+ * refuses with a pointer to the file.
+ *
+ * Because the table can only come from the user's own machine, a hook is
+ * allowed to be a shell string — the same trust as a line in their profile.
+ */
+
+import { eventJson, isEventName, type VaultEvent } from '@ppr/core';
+import { globalConfigPath, readConfigLayer } from '@ppr/core/node';
+import { runChild } from './child.js';
+import { color, errline } from './render.js';
+
+/** Event name -> the commands to run, in order. */
+export type Hooks = Record<string, string[]>;
+
+/**
+ * What a `hooks` block means. Pure, so the parsing rules are testable without
+ * a config file: unknown event names run nothing (a typo is silent rather than
+ * surprising), and a bare string is read as a list of one.
+ */
+export function parseHooks(raw: unknown): Hooks {
+  const out: Hooks = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isEventName(name)) continue;
+    const commands = (Array.isArray(value) ? value : [value])
+      .filter((command): command is string => typeof command === 'string')
+      .map((command) => command.trim())
+      .filter(Boolean);
+    if (commands.length) out[name] = commands;
+  }
+  return out;
+}
+
+/** The hook table, from the user layer alone. See the security rule above. */
+export async function loadHooks(env: NodeJS.ProcessEnv = process.env): Promise<Hooks> {
+  return parseHooks((await readConfigLayer(globalConfigPath(env))).hooks);
+}
+
+/**
+ * An `onEvent` listener that spawns the configured commands, or nothing at all
+ * when no hooks are configured — which is the overwhelmingly common case, and
+ * the reason nothing is read or spawned on a plain `ppr ls`.
+ *
+ * Spawned immediately rather than buffered: an interactive browse session can
+ * run for ten minutes, and forty pending notifications delivered at the end of
+ * it are forty notifications about things you already watched happen.
+ * `drainChildren()` at the end of the command is what bounds the waiting.
+ */
+export function hookRunner(hooks: Hooks): ((event: VaultEvent) => void) | undefined {
+  if (!Object.keys(hooks).length) return undefined;
+
+  return (event: VaultEvent) => {
+    const commands = hooks[event.event];
+    if (!commands) return;
+    const payload = `${JSON.stringify(eventJson(event))}\n`;
+
+    for (const command of commands) {
+      void runChild(command, {
+        shell: true,
+        input: payload,
+        env: { PPR_EVENT: event.event, PPR_VAULT: event.vault },
+      }).then((result) => {
+        // One line, on stderr, and never an exit code: the entry is written
+        // and a courier that tripped is not the user's problem to solve now.
+        if (!result.ok) errline(color.dim(`hook ${event.event}: ${result.hint}`));
+      });
+    }
+  };
+}
