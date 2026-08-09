@@ -299,6 +299,23 @@ export const CASES = [
     ],
   },
   {
+    // One run, two entries, one fact worded two ways — which was structurally
+    // impossible to pass until reconciliation started asking about a
+    // candidate's siblings as well as about the known facts. `factKey` cannot
+    // see it (the sentences differ), and there is no second run to catch it.
+    name: 'one fact said twice in one run is stored once',
+    dimension: 'reconciliation',
+    rounds: [
+      {
+        entries: [
+          { name: 'standup', text: 'Standup: Nadia has taken over the release runbook, so release questions go to her now.' },
+          { name: 'handover', text: 'Finished the handover notes. Maintaining the release runbook is Nadia’s job from here on.' },
+        ],
+        expect: { total: [1, 2] },
+      },
+    ],
+  },
+  {
     name: 'a more precise version replaces the vaguer one',
     dimension: 'reconciliation',
     rounds: [

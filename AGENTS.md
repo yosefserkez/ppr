@@ -215,14 +215,20 @@ under `FACTS_IN_PROMPT`, rank lexically above it, and let dates be arithmetic.
 The intelligence is spent on writing the store, not on searching it, which is
 why the store stays legible enough to fix by hand.
 
-Reconciliation asks how a candidate relates to what is already known, never to
-its siblings, so one run's candidates are collapsed by `factKey` before they
-are sent. That catches the same sentence twice — the case a backfill produces,
-because a fact said on Monday and again on Friday lands in two chunks of one
-run. **Known limit:** two candidates of one run that say the same thing in
-different words are only caught if the model says so on the next run, when one
-of them is `known`. Widening this means reconciling candidates against each
-other, which is a second model call per run for a case a re-run already fixes.
+Reconciliation asks how a candidate relates to what is already known *and* to
+the candidates before it — one call, because both questions were already in the
+one prompt. Under the model, `factKey` collapses exact repeats with nothing
+switched on: the case a backfill produces, because a fact said on Monday and
+again on Friday lands in two chunks of one run. Over it, a
+`duplicate-of-candidate` verdict points *backwards* at an earlier sibling, and
+`absorb()` merges the provenance into whatever that sibling became instead of
+storing the fact again. A pointer that goes forwards, at itself, or at nothing
+is not a verdict — the candidate is stored, because losing a fact is the worse
+failure (I2). **Known limit:** the model not noticing the paraphrase in the
+first place. That is now a number rather than a structural gap — the
+`reconciliation` dimension of `pnpm eval` has a case for it — and a miss still
+costs only what it used to: a second fact, collapsible on the next run when one
+of the pair is `known`.
 
 `ppr context` is the point of the whole thing: ppr is the layer notes go into,
 and what it does with them is hand another tool a grounded snapshot. It runs no

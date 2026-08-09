@@ -420,16 +420,26 @@ function looksLikeAFact(text: string): boolean {
 export type FactVerdict =
   | { verdict: 'new' }
   | { verdict: 'duplicate'; of: string }
+  /**
+   * Says what an *earlier candidate in the same batch* says. `ofCandidate` is
+   * a 0-based index into the candidate list — the prompt numbers candidates
+   * from 1, this does not — and always points backwards, so the caller can
+   * resolve it against something it has already dealt with.
+   */
+  | { verdict: 'duplicate-of-candidate'; ofCandidate: number }
   | { verdict: 'refines'; of: string; text: string }
   | { verdict: 'contradicts'; of: string };
 
 const RECONCILE_SYSTEM = `${VOICE}
 
-Decide how each candidate fact relates to the facts already known.
+Decide how each candidate fact relates to the facts already known, and to the
+candidates before it.
 
 For each candidate, exactly one verdict:
-- "new" — nothing known covers this.
+- "new" — nothing known covers this, and no earlier candidate says it either.
 - "duplicate" — a known fact already says this, even in different words. Give its id.
+- "duplicate-of-candidate" — an earlier candidate in this same list already
+  says this, even in different words. Give its number in "ofCandidate".
 - "refines" — a known fact says this less precisely, and the candidate is a
   strictly better version of the same fact. Give its id and the text to keep.
   Only when the two are about the same subject and the same property.
@@ -441,12 +451,23 @@ Rules:
   refinement. When two facts can both be true at once, they do not contradict.
 - When unsure between "refines" and "new", answer "new". Losing a fact is worse
   than keeping two.
+- The candidates come from one pass over several entries, so the same thing
+  said on two different days appears twice, worded differently. "ofCandidate"
+  must always be a smaller number than "i" — point backwards, never forwards,
+  and never at the candidate itself.
 
-Return JSON: {"verdicts": [{"i": number, "verdict": string, "of": string, "text": string}]}
-- i is the candidate's number. Omit "of" and "text" when they do not apply.`;
+Return JSON: {"verdicts": [{"i": number, "verdict": string, "of": string, "ofCandidate": number, "text": string}]}
+- i is the candidate's number. Omit "of", "ofCandidate", and "text" when they
+  do not apply.`;
 
 /**
- * One verdict per candidate, index-aligned.
+ * One verdict per candidate, index-aligned, against the known facts *and*
+ * against the earlier candidates in the same batch.
+ *
+ * Both questions ride in the one call because both are already in the one
+ * prompt: asking whether a candidate repeats a sibling costs nothing extra,
+ * and without it a backfill that meets the same fact twice in two different
+ * chunks stores it twice.
  *
  * With no model — or a model that returns nonsense — this degrades to exact
  * text matching, which is weak but never wrong in a way that loses a fact (I2).
@@ -466,13 +487,17 @@ export async function reconcileFacts(
     return hit ? { verdict: 'duplicate' as const, of: hit.id } : { verdict: 'new' as const };
   });
 
-  if (!opts.provider || !known.length) return out;
+  // With an empty store a lone candidate can only be "new", so the call is
+  // skipped — but two candidates can still say one thing in two ways, which is
+  // exactly what a first backfill produces and what nothing else here catches.
+  if (!opts.provider || (!known.length && candidates.length < 2)) return out;
 
   const raw = await opts.provider.generate({
     system: RECONCILE_SYSTEM,
     prompt: [
-      'Known facts:',
-      known.map((k) => `[${k.id}] ${k.text}`).join('\n'),
+      known.length
+        ? `Known facts:\n${known.map((k) => `[${k.id}] ${k.text}`).join('\n')}`
+        : 'Known facts: none yet.',
       '',
       'Candidates:',
       candidates.map((c, i) => `${i + 1}. ${c}`).join('\n'),
@@ -487,21 +512,40 @@ export async function reconcileFacts(
 
   const byId = new Map(known.map((k) => [k.id, k]));
   for (const item of parsed.verdicts) {
-    const row = item as { i?: unknown; verdict?: unknown; of?: unknown; text?: unknown };
+    const row = item as {
+      i?: unknown;
+      verdict?: unknown;
+      of?: unknown;
+      ofCandidate?: unknown;
+      text?: unknown;
+    };
     const index = Number(row.i) - 1;
     if (!Number.isInteger(index) || index < 0 || index >= candidates.length) continue;
     const of = typeof row.of === 'string' ? row.of.trim() : '';
-    // A verdict that points at a fact which does not exist decides nothing.
-    if (!byId.has(of)) continue;
+    // A sibling verdict may only point at a candidate that has already been
+    // decided. A forward reference has no answer yet, and a pair pointing at
+    // each other would leave nothing standing — so anything but an earlier
+    // candidate is not a verdict at all, and the floor below it holds.
+    const sibling = Number(row.ofCandidate) - 1;
+    const earlier =
+      Number.isInteger(sibling) && sibling >= 0 && sibling < index ? sibling : null;
 
     switch (row.verdict) {
       case 'duplicate':
-        out[index] = { verdict: 'duplicate', of };
+        // A verdict that points at a fact which does not exist decides
+        // nothing — unless it gave a candidate number instead, which is the
+        // same answer written under the other label.
+        if (byId.has(of)) out[index] = { verdict: 'duplicate', of };
+        else if (earlier !== null) out[index] = { verdict: 'duplicate-of-candidate', ofCandidate: earlier };
+        break;
+      case 'duplicate-of-candidate':
+        if (earlier !== null) out[index] = { verdict: 'duplicate-of-candidate', ofCandidate: earlier };
         break;
       case 'contradicts':
-        out[index] = { verdict: 'contradicts', of };
+        if (byId.has(of)) out[index] = { verdict: 'contradicts', of };
         break;
       case 'refines': {
+        if (!byId.has(of)) break;
         const text = typeof row.text === 'string' ? row.text.trim() : '';
         out[index] = text ? { verdict: 'refines', of, text } : { verdict: 'new' };
         break;

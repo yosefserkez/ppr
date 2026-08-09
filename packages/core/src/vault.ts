@@ -817,9 +817,10 @@ export class Vault {
    * Folds candidate facts into the store, one verdict at a time.
    *
    * Reconciliation happens against what was already known, so a second run
-   * over the same week does not double the store. Only the facts a candidate
-   * could plausibly be about are sent: a few hundred one-liners is a small
-   * prompt, but a vault that has been running for a year is not.
+   * over the same week does not double the store, and against the candidates
+   * before it, so one run cannot either. Only the facts a candidate could
+   * plausibly be about are sent: a few hundred one-liners is a small prompt,
+   * but a vault that has been running for a year is not.
    */
   private async absorb(
     candidates: tasks.FactCandidate[],
@@ -834,41 +835,70 @@ export class Vault {
       { provider: this.provider, ...signal },
     );
 
+    // What each candidate ended up as, so a later one the model marked as
+    // saying the same thing merges into whatever its sibling produced — a new
+    // fact, a refined one, or the known fact it deduped into. A chain resolves
+    // itself: candidate 2 already holds what it merged into, so a third
+    // pointing at 2 lands on the same file rather than on a ghost.
+    const produced: Array<Entry | undefined> = [];
+
     for (const [i, candidate] of candidates.entries()) {
       const verdict = verdicts[i] ?? { verdict: 'new' as const };
-      const target = verdict.verdict === 'new' ? undefined : this.catalog.get(verdict.of);
 
-      if (!target || verdict.verdict === 'new') {
-        result.learned.push(await this.writeFact(candidate));
+      if (verdict.verdict === 'duplicate-of-candidate') {
+        const sibling = produced[verdict.ofCandidate];
+        // A pointer at nothing settles nothing, and a fact is not something to
+        // drop on a technicality (I2) — so an unresolvable one falls through
+        // and is stored.
+        if (sibling) {
+          result.duplicates++;
+          const merged = await this.addSources(sibling, candidate.from);
+          // Both indices are pointed at the entry as it is *now*: the next
+          // sibling to merge patches from what it is handed, so a stale copy
+          // would write back a provenance list taken before this merge.
+          produced[verdict.ofCandidate] = merged;
+          produced[i] = merged;
+          continue;
+        }
+      }
+
+      const target =
+        verdict.verdict === 'new' || verdict.verdict === 'duplicate-of-candidate'
+          ? undefined
+          : this.catalog.get(verdict.of);
+
+      if (!target) {
+        produced[i] = await this.writeFact(candidate);
+        result.learned.push(produced[i]!);
         continue;
       }
       if (verdict.verdict === 'duplicate') {
         result.duplicates++;
         // The fact was said again, which is worth recording even when the
         // wording adds nothing: provenance is what `why` has to answer with.
-        await this.addSources(target, candidate.from);
+        produced[i] = await this.addSources(target, candidate.from);
         continue;
       }
       if (verdict.verdict === 'refines') {
         const fact = toFact(target);
         // A person's own words are not the model's to improve on.
         if (fact.origin === 'manual') {
-          result.learned.push(await this.writeFact(candidate));
+          produced[i] = await this.writeFact(candidate);
+          result.learned.push(produced[i]!);
           continue;
         }
-        result.refined.push(
-          await this.update(target.id, {
-            body: verdict.text,
-            title: truncate(verdict.text, 70),
-            // Spread the existing fact first: a better wording must not drop
-            // a date or a provenance trail it simply did not mention.
-            ...this.factPatch({
-              ...fact,
-              from: mergeIds(fact.from, candidate.from),
-              ...(candidate.date ? { date: candidate.date, ...(candidate.recurs ? { recurs: candidate.recurs } : {}) } : {}),
-            }),
+        produced[i] = await this.update(target.id, {
+          body: verdict.text,
+          title: truncate(verdict.text, 70),
+          // Spread the existing fact first: a better wording must not drop
+          // a date or a provenance trail it simply did not mention.
+          ...this.factPatch({
+            ...fact,
+            from: mergeIds(fact.from, candidate.from),
+            ...(candidate.date ? { date: candidate.date, ...(candidate.recurs ? { recurs: candidate.recurs } : {}) } : {}),
           }),
-        );
+        });
+        result.refined.push(produced[i]!);
         continue;
       }
       // Contradiction: keep both, flag the pair, decide nothing.
@@ -877,6 +907,7 @@ export class Vault {
         target.id,
         this.factPatch({ ...toFact(target), conflicts: mergeIds(toFact(target).conflicts, [added.id]) }),
       );
+      produced[i] = added;
       result.conflicts.push({ fact: added, with: marked });
     }
   }

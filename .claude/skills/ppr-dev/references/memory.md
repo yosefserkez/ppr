@@ -85,11 +85,13 @@ explicit list reads a window that can begin *after* the mark, so it must not
 move it: that would write off the gap for good. Losing the mark costs a re-scan,
 which reconciliation absorbs.
 
-**One run must not store the same fact twice.** Reconciliation compares a
-candidate against what was already known, never against its siblings — so
-candidates are collapsed by `factKey` before they are reconciled. A backfill
-chunks the journal, and something said on Monday and again on Friday lands in
-two chunks of one run.
+**One run must not store the same fact twice.** A backfill chunks the journal,
+so something said on Monday and again on Friday lands in two chunks of one run.
+Two layers catch it: `factKey` collapses the identical sentence with no model
+involved, and reconciliation is asked about the candidates *before* each one as
+well as about the known facts — a `duplicate-of-candidate` verdict merges into
+whatever that earlier sibling became. Sibling pointers only ever run backwards;
+one that does not is ignored and the fact is kept, because losing it is worse.
 
 ## Adding a field to a fact
 

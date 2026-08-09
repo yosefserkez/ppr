@@ -373,6 +373,94 @@ test('one run cannot store the same fact twice', async () => {
   assert.equal(toFact(result.learned[0]).from.length, 4);
 });
 
+test('one run cannot store the same fact worded two ways', async () => {
+  // The other half of the same problem: `factKey` collapses a repeat of the
+  // sentence, and only the model can see that two sentences say one thing. It
+  // is asked in the call it was already making, so this costs nothing.
+  const vault = await makeVault({ provider: learnProvider({ facts: [] }) });
+  const monday = await vault.add({ kind: 'log', body: 'Nadia has taken over the release runbook.' });
+  const friday = await vault.add({ kind: 'log', body: 'The release runbook is Nadia’s from now on.' });
+
+  vault.provider = learnProvider({
+    facts: [
+      { fact: 'Nadia maintains the release runbook', from: [monday.id] },
+      { fact: 'The release runbook is Nadia’s responsibility', from: [friday.id] },
+    ],
+    verdicts: [{ i: 2, verdict: 'duplicate-of-candidate', ofCandidate: 1 }],
+  });
+  const result = await vault.learn();
+
+  assert.equal(result.learned.length, 1);
+  assert.equal(result.duplicates, 1);
+  const facts = vault.facts();
+  assert.equal(facts.length, 1);
+  // Merged into the survivor, not dropped with the wording: `ppr memory why`
+  // has to be able to name both days it was said.
+  assert.deepEqual(facts[0].from.slice().sort(), [monday.id, friday.id].sort());
+});
+
+test('a chain of sibling duplicates collapses to the fact at its head', async () => {
+  const vault = await makeVault({ provider: learnProvider({ facts: [] }) });
+  const a = await vault.add({ kind: 'log', body: 'Nadia has taken over the release runbook.' });
+  const b = await vault.add({ kind: 'log', body: 'Release runbook: Nadia owns it.' });
+  const c = await vault.add({ kind: 'log', body: 'Anything about cutting a release goes to Nadia.' });
+
+  vault.provider = learnProvider({
+    facts: [
+      { fact: 'Nadia maintains the release runbook', from: [a.id] },
+      { fact: 'The release runbook belongs to Nadia', from: [b.id] },
+      { fact: 'Nadia is responsible for the release runbook', from: [c.id] },
+    ],
+    // 3 points at 2, which points at 1. Resolving that has to end at the fact
+    // 2 merged into, or the third sighting patches an entry nobody kept.
+    verdicts: [
+      { i: 2, verdict: 'duplicate-of-candidate', ofCandidate: 1 },
+      { i: 3, verdict: 'duplicate-of-candidate', ofCandidate: 2 },
+    ],
+  });
+  const result = await vault.learn();
+
+  assert.equal(result.learned.length, 1);
+  assert.equal(result.duplicates, 2);
+  const facts = vault.facts();
+  assert.equal(facts.length, 1);
+  assert.deepEqual(facts[0].from.slice().sort(), [a.id, b.id, c.id].sort());
+});
+
+test('a sibling verdict pointing forwards, or at itself, is ignored', async () => {
+  // Nothing has been written for a later candidate yet, and a pair pointing at
+  // each other would leave no fact at all — so an unresolvable pointer keeps
+  // the fact rather than losing it (I2).
+  const vault = await makeVault({ provider: learnProvider({ facts: [] }) });
+  await vault.add({ kind: 'log', body: 'Nadia has taken over the release runbook.' });
+  await vault.add({ kind: 'log', body: 'Tomas prefers Telegram to email.' });
+
+  vault.provider = learnProvider({
+    facts: ['Nadia maintains the release runbook', 'Tomas prefers to be contacted on Telegram'],
+    verdicts: [
+      { i: 1, verdict: 'duplicate-of-candidate', ofCandidate: 2 },
+      { i: 2, verdict: 'duplicate-of-candidate', ofCandidate: 2 },
+    ],
+  });
+  const result = await vault.learn();
+
+  assert.equal(result.learned.length, 2);
+  assert.equal(result.duplicates, 0);
+  assert.equal(vault.facts().length, 2);
+});
+
+test('one candidate and an empty store is not worth a reconcile call', async () => {
+  const seen = [];
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ memories: ['Emily likes chocolate'] }), { record: seen }),
+  });
+  await vault.add({ kind: 'log', body: 'Emily likes chocolate' });
+  await vault.learn();
+
+  const reconciles = seen.filter((req) => /Decide how each candidate/.test(req.system));
+  assert.equal(reconciles.length, 0, 'nothing to compare it against, so nothing to ask');
+});
+
 test('facts live outside the journal tree', async () => {
   const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
   const [fact] = await vault.remember('emily likes chocolate');
