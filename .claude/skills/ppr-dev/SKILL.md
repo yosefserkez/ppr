@@ -52,6 +52,10 @@ file somebody typed `date:` into by hand.
    the timeline; it completes rather than becoming untrue.
 6. **Am I solving a problem someone actually has?** The dependency list is three
    packages. Keep it that way.
+7. **Is the OS already doing this?** Then hand it over rather than rebuilding
+   it — `$EDITOR`, `launchd`, notifications, Reminders.app. Everything ppr
+   hands over is one-way and fire-and-forget, and the vault write happens first
+   so a failure costs a stderr line and never an entry (`references/memory.md`).
 
 ## Recipes
 
@@ -64,6 +68,7 @@ Load the reference for the task at hand:
 | Add or change an interactive terminal view | `references/interactive-ui.md` |
 | Add something that can be misconfigured or missing | `references/checks.md` |
 | Change what ppr learns, a fact's shape, or a prompt | `references/memory.md` |
+| Hand something to macOS — a notification, a reminder | `references/memory.md` |
 
 ## Always, regardless of task
 

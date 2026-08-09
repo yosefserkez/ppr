@@ -135,6 +135,7 @@ ppr remind tomorrow call the dentist
 ppr remind "next friday" review the roadmap
 ppr remind every year on 20 october call mum
 ppr remind pay the rent --at "in 3 days"
+ppr remind tomorrow call the dentist --push    # a copy in Reminders.app too
 ppr "remind me to call the dentist tomorrow"   # the same thing, quoted
 ppr done 6jc6ad                                # dealt with
 ```
@@ -153,6 +154,30 @@ explicit form.
 `ppr done` writes `status: done` and changes nothing else; the file stays.
 An unfinished reminder shows up as overdue for a week after its day, then stops
 asking — a brief that never forgets is a guilt list rather than a heads-up.
+
+### Letting the OS do the ringing
+
+**Delivery is the operating system's job.** ppr is not going to grow a daemon,
+a notification centre, or a calendar; macOS has all three and they already
+reach your watch. So ppr hands things over the same way it hands editing to
+`$EDITOR` and scheduling to `launchd`, and then gets out of the way.
+
+```bash
+ppr brief --notify                # post it as a notification
+ppr remind tomorrow call the dentist --push
+ppr config set remind.push true   # every reminder, quoted ones included
+```
+
+Both are **one-way and fire-and-forget**. Nothing is read back out of
+Reminders.app, nothing syncs, and completing the copy over there does not reach
+in here — the markdown stays the only source of truth. The vault write happens
+first and always survives: if the bridge fails, or you are not on a Mac, you
+get one line on stderr and the entry is exactly where it would have been.
+
+`--notify` posts the soonest item and a count of the rest, because banners
+truncate hard and five things squeezed into two lines are read as none of them.
+Nothing coming up posts nothing at all — a daily "nothing coming up" ping is
+how a notification channel stops being read.
 
 ### Composing with `ppr write`
 
@@ -321,6 +346,7 @@ the sentence.
 
 ```bash
 ppr brief --json | jq '.[] | select(.overdue)'
+ppr brief --notify                            # and as a macOS notification
 ```
 
 ### Handing it to something else
@@ -339,13 +365,16 @@ ppr context --json | jq .facts
 
 ```bash
 ppr schedule add learn --at 03:00   # launchd or cron, whichever you have
-ppr schedule add brief --at 08:00
+ppr schedule add brief --at 08:00   # arrives as a notification
 ppr schedule ls
 ```
 
 ppr does not run in the background and will not start; `schedule` writes the
 config for the scheduler your machine already has, and prints the crontab line
 if it cannot install one.
+
+The scheduled `brief` runs with `--notify`, because a brief printed into a
+launchd log at 8am is a brief nobody reads.
 
 Only `learn` needs a model. `ppr ai test` sends one prompt end to end and says
 whether yours answers — and whether it answers in JSON, which is what every ppr

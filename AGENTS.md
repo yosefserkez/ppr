@@ -234,6 +234,43 @@ of the pair is `known`.
 and what it does with them is hand another tool a grounded snapshot. It runs no
 model, so it is instant and identical every time.
 
+### The bridge to the OS
+
+```
+core/src/node/macos.ts   how: AppleScript, escaping, error hints. Pure builders.
+cli/src/bridge.ts        when: what survives a banner, whether a push happens.
+```
+
+**The line: ppr may hand things to the operating system; it never becomes one
+of its apps.** Delivery is delegated exactly like editing is delegated to
+`$EDITOR` and scheduling to `launchd` — macOS already reaches your watch and
+ppr is not going to grow a second version of that. `ppr brief --notify` posts
+a banner; `remind.push` / `--push` creates a reminder in the default list.
+
+Everything across it is **one-way and fire-and-forget**. No Calendar events, no
+sync, no reading back from Reminders.app, no daemon, no list-picking config.
+Nothing over there may write anything back here, because the moment two systems
+own the same row the markdown has stopped being the source of truth (I1).
+
+The vault write always happens first and always survives. A bridge failure —
+osascript refusing, Automation permission denied, not being on a Mac — costs a
+notification and one line on stderr, never an entry and never an exit code
+(I2's shape). That is why the executors return `{ok, hint?}` rather than
+throwing.
+
+The split is `schedule.ts`'s: **pure generators, thin executors.** Script text,
+escaping, truncation, and the push decision are all pure functions with unit
+tests; the three-line functions around them are the only thing that shells out.
+**No test may run osascript** — a suite that posts banners or creates reminders
+leaves litter in a real person's Reminders list. The non-darwin and switched-off
+paths are the only ones integration-tested.
+
+Two traps are already paid for and commented in place: AppleScript string
+literals cannot span lines and take exactly five escapes, and an AppleScript
+*date literal* is parsed in the user's locale — so a pushed date is assembled
+from components, with `set day of d to 1` first so assigning a month never
+rolls the date into the next one.
+
 ### Where does my change go?
 
 | If it is... | It goes in... |
@@ -243,6 +280,8 @@ model, so it is instant and identical every time.
 | Anything dated: the shared shape, occurrences, overdue | `core/src/memory.ts` |
 | Reminders: their frontmatter, and reading a date out of words | `core/src/remind.ts` |
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
+| Handing something to macOS: the AppleScript and its escaping | `core/src/node/macos.ts` |
+| Whether and what ppr hands over | `cli/src/bridge.ts` |
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
 | A decision about "what can I see next" | `core/src/navigate.ts` (it is a graph question) |
@@ -419,6 +458,10 @@ pnpm build
   renders, including typed answers for a machine with no terminal.
 - `cli/test/schedule.test.js` — the launchd plist and crontab line, including
   the absolute paths a scheduler needs (L22).
+- `core/test/macos.test.js` — the AppleScript a bridge call would run, on a
+  hostile string and a date. Builders only; nothing here runs osascript.
+- `cli/test/bridge.test.js` — what survives a notification, and whether a
+  reminder is allowed out of the vault.
 - `cli/test/followups.test.js` — when a capture is allowed to ask a question.
 - `cli/test/suggest.test.js` — did-you-mean, and what it refuses to guess.
 - `cli/test/cli.test.js` — the real binary, spawned against a temp vault.
@@ -662,6 +705,9 @@ actually run the command you changed. Report what you verified and what you did 
 ## 11. What not to do
 
 - Do not add a database, an index server, or a sync daemon. Git is the sync story.
+- Do not widen the macOS bridge into two-way anything: no Calendar events, no
+  reading back from Reminders.app, no reconciling a tickbox somebody moved over
+  there. ppr hands things over and forgets them (section 4).
 - Do not add embeddings or a vector store to search. Lexical search needs no setup,
   works offline, and is instant on a personal vault. `ppr ask` is where semantics live.
 - Do not make AI required for any command that has a sensible offline behaviour.

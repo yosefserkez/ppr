@@ -52,6 +52,33 @@ Adding a reminder field is the same four edits as a fact's, against
 `reminderExtra()` / `REMINDER_KEYS` / `toDated()` / the `--json` shape in
 `commands/think.ts`.
 
+## Handing a reminder to the OS
+
+`remind.push` (and `--push` / `--no-push`) copies a dated reminder into
+Reminders.app; `ppr brief --notify` posts a banner. Both cross a line that does
+not move: **ppr hands things to the OS and never becomes one of its apps.**
+One-way, fire-and-forget — no sync, no Calendar, nothing read back. A tickbox
+moved in Reminders.app does not reach the vault, because two owners of one row
+is the end of I1.
+
+The vault write happens first and always survives. A bridge failure costs a
+stderr line, never the entry (I2's shape), which is why the executors in
+`core/src/node/macos.ts` return `{ok, hint?}` instead of throwing.
+
+`pushDecision()` in `cli/src/bridge.ts` is the only thing that decides, so
+`ppr remind` and `ppr "remind me …"` cannot disagree — both reach it through
+the one `remind()` in `commands/capture.ts` (L18). Order is flag, then day,
+then platform: a dateless line became an ordinary log and has nothing to ring
+about, so `--push` cannot conjure a reminder out of it.
+
+Script building and the decision are pure and unit-tested. **No test runs
+osascript** — a suite that creates reminders leaves litter in someone's list.
+
+| If it is... | It goes in... |
+| --- | --- |
+| The AppleScript, its escaping, an osascript error hint | `core/src/node/macos.ts` |
+| Whether to push, and what a notification says | `cli/src/bridge.ts` |
+
 ## The rules that are not negotiable
 
 **Memory is state; everything else is a log (I12).** `latest`, `^2`, `ppr ls`,
