@@ -14,6 +14,7 @@ import {
   type Vault,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
+import { refuseDryRun } from '../dryrun.js';
 import { ago, color, entryDetail, entryJson, entryList, errline, json, out, searchList, table, shortId } from '../render.js';
 import { spawnEditorOn } from '../input.js';
 import { browse, canBrowse } from '../ui/browser.js';
@@ -251,6 +252,13 @@ export function editCommand(): Command {
     .argument('[ref]', 'entry id, `latest`, or a title fragment', 'latest')
     .action(async (ref: string, _flags: unknown, self: Command) =>
       withVault(self, async (vault) => {
+        // The one command whose editor is not composing. Everywhere else
+        // `$EDITOR` opens a scratch file and ppr writes the result through
+        // Storage, which a dry run intercepts; here the editor opens the
+        // entry itself (L8), so `:wq` *is* the write and there is no seam
+        // left to hold it back. A preview that let the file be rewritten
+        // while promising nothing changed is worse than no preview.
+        refuseDryRun('ppr edit', 'Your editor opens the entry itself, so saving is the write.');
         const entry = vault.get(ref);
         const file = join(vault.root, entry.path);
         const { readFile } = await import('node:fs/promises');

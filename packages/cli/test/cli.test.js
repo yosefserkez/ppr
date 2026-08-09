@@ -502,6 +502,26 @@ test('--dry-run shows the scheduler config without installing one', async () => 
   });
 });
 
+test('--dry-run refuses `ppr edit`, because saving is the write', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'the original words']);
+    const file = (await ppr(dir, ['path', 'latest'])).stdout.trim();
+    const before = await readFile(file, 'utf8');
+
+    // An editor that saves the moment it opens: every other editor in ppr
+    // composes into a scratch file that Storage then writes, and a dry run
+    // intercepts that. This one opens the entry itself (L8), so there is
+    // nothing left to intercept.
+    await writeScript(dir, 'saves-immediately', 'printf "\\nedited\\n" >> "$1"');
+    const { code, stderr } = await ppr(dir, ['edit', 'latest', '--dry-run'], {
+      editor: join(dir, 'bin', 'saves-immediately'),
+    });
+    assert.equal(code, 2);
+    assert.match(stderr, /cannot preview `ppr edit`/);
+    assert.equal(await readFile(file, 'utf8'), before, 'and the editor never opened');
+  });
+});
+
 test('--dry-run previews what would happen, so an error still happens', async () => {
   await withVault(async (dir) => {
     const { code, stderr } = await ppr(dir, ['memory', 'learn', '--dry-run']);
