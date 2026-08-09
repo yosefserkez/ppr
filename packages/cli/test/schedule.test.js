@@ -16,10 +16,12 @@ test('a scheduled job is an ordinary ppr command', () => {
     jobArgv({ job: 'learn', at: '03:00' }, '/opt/homebrew/bin/node', '/repo/dist/index.js'),
     ['/opt/homebrew/bin/node', '/repo/dist/index.js', 'memory', 'learn', '--quiet'],
   );
-  // The vault has to be explicit: cron has no cwd worth inheriting.
+  // The vault has to be explicit: cron has no cwd worth inheriting. And the
+  // scheduled brief notifies, because a brief printed into a launchd log at
+  // 8am is a brief nobody reads.
   assert.deepEqual(
     jobArgv({ job: 'brief', at: '08:00', vault: '~/notes' }, '/usr/bin/node', '/repo/dist/index.js'),
-    ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief'],
+    ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief', '--notify'],
   );
 });
 

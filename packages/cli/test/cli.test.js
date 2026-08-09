@@ -873,6 +873,20 @@ test('a fact you add by hand is stored outside the journal and stays out of it',
   });
 });
 
+test('an empty brief posts nothing, and says that is what it did', async () => {
+  await withVault(async (dir) => {
+    // The one --notify case a test may exercise for real: with nothing
+    // upcoming there is no banner to post, on any platform. A daily "nothing
+    // coming up" ping is how a notification channel stops being read.
+    const { code, stdout, stderr } = await ppr(dir, ['brief', '--notify']);
+    assert.equal(code, 0);
+    assert.match(stdout, /Nothing coming up\./);
+    assert.match(stderr, /no notification sent/i);
+    // I10: --notify is a side effect, so stdout is what it was without it.
+    assert.equal(stdout, (await ppr(dir, ['brief'])).stdout);
+  });
+});
+
 test('brief counts down to a dated fact with no model at all', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['memory', 'add', "Priya's birthday is 12 September"]);

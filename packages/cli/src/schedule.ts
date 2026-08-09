@@ -25,8 +25,12 @@ export const JOBS = {
     defaultAt: '03:00',
   },
   brief: {
-    args: ['brief'],
-    description: 'what is coming up',
+    // `--notify` is what makes this job worth having. Without it a scheduled
+    // brief writes what is coming up into a launchd log at 8am, where nobody
+    // is looking — the command was already composable, and the missing half
+    // was delivery.
+    args: ['brief', '--notify'],
+    description: 'what is coming up, as a notification',
     defaultAt: '08:00',
   },
 } as const;

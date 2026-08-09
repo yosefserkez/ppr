@@ -16,6 +16,7 @@ import {
   type Upcoming,
   type VaultContext,
 } from '@ppr/core';
+import { announceBrief } from '../bridge.js';
 import { dayFlag, filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
 import { select } from '../ui/select.js';
@@ -74,6 +75,7 @@ export function briefCommand(): Command {
     .description('what is coming up: dated facts, reminders, and anything else with a date')
     .option('--within <days>', 'how far ahead to look', '30')
     .option('--plain', 'skip the model and print the dates')
+    .option('--notify', 'also post it as a macOS notification')
     .addHelpText(
       'after',
       `
@@ -81,17 +83,25 @@ export function briefCommand(): Command {
   { "id", "kind", "text", "date": "YYYY-MM-DD", "days", "overdue",
     "ordinal"?, "recurs", "mentions": [entry] }
 "days" is negative when it is overdue: an unfinished reminder stays visible
-for a week after its day.`,
+for a week after its day.
+
+--notify posts the soonest item as a banner and prints exactly what it printed
+before. Nothing upcoming posts nothing — a daily "nothing coming up" ping is
+how notifications stop being read. It is what \`ppr schedule add brief\` runs.`,
     )
-    .action(async (flags: { within?: string; plain?: boolean }, self: Command) =>
+    .action(async (flags: { within?: string; plain?: boolean; notify?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         const withinDays = number('--within', flags.within, 30);
         const g = globals(self);
+        // A notification is a side effect, never the output (I10): the same
+        // stdout goes to the same place whether or not a banner was posted,
+        // and the banner is built from the items rather than from the prose.
+        const announce = flags.notify ? announceBrief : async () => {};
 
         if (flags.plain || g.json) {
           const items = vault.upcoming({ withinDays });
           if (g.json) {
-            return json(
+            json(
               items.map((item) => ({
                 id: item.item.id,
                 // A brief holds birthdays and dentist appointments now, and a
@@ -110,17 +120,24 @@ for a week after its day.`,
                 mentions: item.mentions.map(entryJson),
               })),
             );
+          } else if (!items.length) {
+            out(color.dim('Nothing coming up.'));
+          } else {
+            out(heuristicBrief(items.map(briefItem)));
           }
-          if (!items.length) return void out(color.dim('Nothing coming up.'));
-          return void out(heuristicBrief(items.map(briefItem)));
+          return void (await announce(items));
         }
 
         const result = await vault.brief({ withinDays });
-        if (!result.items.length) return void out(color.dim('Nothing coming up.'));
-        out(result.text);
-        if (!g.quiet && !result.ai && vault.hasAI) {
-          errline(color.dim('The model returned nothing usable — these are the dates themselves.'));
+        if (!result.items.length) {
+          out(color.dim('Nothing coming up.'));
+        } else {
+          out(result.text);
+          if (!g.quiet && !result.ai && vault.hasAI) {
+            errline(color.dim('The model returned nothing usable — these are the dates themselves.'));
+          }
         }
+        await announce(result.items);
       }),
     );
 }
