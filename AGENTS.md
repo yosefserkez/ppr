@@ -130,6 +130,10 @@ search all skip it unless `-k memory` asks for it, and `ppr memory learn` never
 reads a memory as a source. Ignoring this is how the memory layer ate its own
 tail — learn defaulted to `latest`, `latest` became the fact it had just
 written, and every run after the first reported "nothing durable in there".
+A `kind: reminder` is on the log side of that line and stays there: you *did*
+say "remind me to call the dentist" at the moment you said it, and it completes
+rather than ceasing to be true. Carrying a date does not make something state —
+`ppr brief` reads dates, not kinds (see §5, dated anything).
 The one deliberate exception is `ppr export`, which is interchange rather than
 a view: it means "everything you have", and a backup that silently omitted the
 fact store would lose data. It widens the default at its own call site (an
@@ -380,7 +384,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 213 tests. No network. No TTY required.
+pnpm test        # 236 tests. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -393,7 +397,10 @@ pnpm build
   fallback. This is how AI behaviour is tested without a model. Learning and
   reconciliation live here too, because both are AI tasks with a fallback.
 - `core/test/memory.test.js` — the pure half of the fact layer: date parsing,
-  recurrence, and which words identify a fact. No provider involved.
+  recurrence, overdue windows, and which words identify a fact. No provider
+  involved.
+- `core/test/remind.test.js` — reading a day out of a typed line, and the
+  phrases that must *not* be read as one. Pure, table-driven, fixed `now`.
 - `core/test/links.test.js` — auto-linking known names without touching code,
   URLs, or a link that is already there.
 - `core/test/providers.test.js` — provider wire formats against a local HTTP stub.

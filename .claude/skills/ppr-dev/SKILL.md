@@ -31,6 +31,11 @@ is true — one-line facts distilled out of the journal, outside the timeline an
 rebuildable from it (I12). Facts are ordinary markdown entries with
 `kind: memory`; everything the layer adds rides in `Entry.extra`.
 
+A `kind: reminder` is an intention and lives in the *first* tree: you did say it
+when you said it. What it shares with a fact is only `date:`/`recurs:` in
+`extra`, which is what `ppr brief` counts down — dated anything, including a
+file somebody typed `date:` into by hand.
+
 ## The six questions to ask before writing code
 
 1. **Would a future mobile app need this logic?** Then it goes in core, not the CLI.
@@ -40,9 +45,11 @@ rebuildable from it (I12). Facts are ordinary markdown entries with
    answer. "It errors" is only acceptable when there is genuinely nothing to do.
 4. **What happens when it is piped?** Interactive behaviour must never change what
    a script sees.
-5. **Is it something that happened, or something that is true?** The first is an
-   entry, the second is a fact — and a fact must stay out of `latest`, `ls`,
-   `recap`, and search unless `-k memory` asks for it (I12).
+5. **Is it something that happened, something that is true, or something to
+   do?** The first is an entry, the second is a fact — and a fact must stay out
+   of `latest`, `ls`, `recap`, and search unless `-k memory` asks for it (I12).
+   The third is a reminder, which is an entry with a date on it and *stays* in
+   the timeline; it completes rather than becoming untrue.
 6. **Am I solving a problem someone actually has?** The dependency list is three
    packages. Keep it that way.
 
