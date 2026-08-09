@@ -4,16 +4,16 @@
 
 | File | Holds |
 | --- | --- |
-| `commands/capture.ts` | Anything that creates entries: write, dump, clip, voice, append, rm |
-| `commands/browse.ts` | Anything that reads them: ls, search, show, edit, tags, links, path, stats, export |
-| `commands/think.ts` | What ppr does with entries: recap, brief, ask, context, memory |
+| `commands/capture.ts` | Anything that creates entries: write, dump, clip, voice, append, remind, todo, done, rm |
+| `commands/browse.ts` | Anything that reads them: ls, todos, search, show, edit, tags, links, path, stats, export |
+| `commands/think.ts` | What ppr does with entries: recap, thread, brief, ask, context, memory |
 | `commands/schedule.ts` | Putting a ppr command on the OS scheduler |
 | `commands/settings.ts` | init, config, ai, doctor, reindex |
 | `commands/hooks.ts` | Registering an event → command, in the user config layer |
 | `commands/plugins.ts` | Reporting what is wired to ppr: hooks, intents, `ppr-*`, settings |
 
 A genuinely new category earns a new file. Five commands in the wrong file is
-worse than a fourth file.
+worse than one more file.
 
 ## The shape
 
@@ -72,11 +72,15 @@ from `dryrun.ts` with the *artifact* it would have produced (the config delta,
 the plist path and its calendar entry) and then returns without writing.
 
 A command that downloads or installs calls `refuseDryRun()` instead: there is no
-honest preview of an install. `ppr doctor` is the dry run for `ppr setup`.
+honest preview of an install. `ppr doctor` is the dry run for `ppr setup`. So
+does `ppr edit`, from the other direction — its editor opens the entry itself
+(L8), so saving *is* the write and there is no seam left to hold it back.
 
 Three things a dry run must never fake, because faking them makes the preview
 worthless: the model still runs, `$EDITOR` still opens, and an error is still an
-error with its exit code.
+error with its exit code. The second is why `ppr edit` refuses rather than
+previewing: composing is not an effect and saving is, and there they are the
+same act.
 
 ## Errors
 

@@ -51,8 +51,9 @@ Requires Node 20.11+ and pnpm.
 The installer builds the project and puts a small `ppr` wrapper on your `PATH`
 (it picks `$PNPM_HOME`, `~/.local/bin`, or `/usr/local/bin` — whichever is
 already there). The wrapper runs the code in this repo rather than a copy of it.
-The two programs in `plugins/` go on `PATH` beside it, because `--notify` and
-`--push` look them up by name.
+The three programs in `plugins/` go on `PATH` beside it, because `--notify`,
+`--push`, and `ppr contact` look them up by name. One of yours already sitting
+under those names is left alone — that is how you replace one.
 
 **Updating is just editing.** Change the source, run `ppr`, and it rebuilds
 itself first — no reinstall, nothing to remember after a `git pull`. A clean run
@@ -701,6 +702,11 @@ to it, and nothing gets registered anywhere:
 }
 ```
 
+A hook may write to a vault, and its write happens — but it announces nothing,
+so ppr fans out once, from the command you ran. Otherwise a hook that logs a
+copy somewhere is a new process per entry, forever. If yours wants a second
+thing to happen, it runs it itself.
+
 **A `ppr-foo` on your `PATH`** is a subcommand, the way `git-foo` is:
 
 ```sh
@@ -723,6 +729,10 @@ ppr config set ai.model llama3 --dry-run  # the delta, not the file
 ppr schedule add brief --at 08:00 --dry-run
 ```
 
+Models still run and `$EDITOR` still opens, because composing is not an effect
+— saving is. The two commands where they are the same act, `ppr edit` and
+`ppr setup`, say so and refuse rather than previewing half of themselves.
+
 Events: `entry.created`, `entry.updated`, `entry.removed`, `entry.completed`,
 `fact.learned`, `fact.refined`, `conflict.found`, `learn.finished`. Coarse on
 purpose — a reminder is `entry.created` plus a check on `kind`, and the payload
@@ -730,8 +740,8 @@ carries the whole entry so you never have to ask a second question — including
 `vault` and `path`, so a consumer can link straight to the markdown file. Your
 settings live under `plugins.<you>.<key>`; read them with `ppr config get`.
 
-`plugins/README.md` has the long version, with the two programs ppr ships as
-worked examples.
+`plugins/README.md` has the long version, with the three programs ppr ships as
+worked examples — two that are pushed to, and one that pulls.
 
 ## Architecture
 
@@ -743,8 +753,8 @@ Imports no platform API. Everything it touches is a port: `Storage`, `Clock`,
 - `ppr` — the CLI. Commander, colour, prompts. Parses arguments, calls core,
 renders the result.
 
-Plus `plugins/`, which is neither: two ordinary programs that ppr ships, puts on
-your `PATH`, and finds by name. Nothing in `packages/` imports them.
+Plus `plugins/`, which is neither: three ordinary programs that ppr ships, puts
+on your `PATH`, and finds by name. Nothing in `packages/` imports them.
 
 The browser repeats that split one level down: `ui/state.ts` is a pure reducer
 (keys in, new state plus an effect out) with no terminal or vault access, and

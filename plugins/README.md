@@ -156,8 +156,11 @@ holding to them itself:
 - **Be quick, or detach.** ppr waits about two seconds at the end of a command
   and then stops waiting. It will not kill you; it will just stop caring.
 - **Never write back into the vault.** One-way is what keeps the markdown the
-  only owner of a row (I1). If you want to record something, that is
-  `ppr write`, as a person would.
+  only owner of a row (I1). If you want to record something new, that is
+  `ppr write`, as a person would — and it announces nothing, because ppr fans
+  out once, from the command the person ran. Otherwise a consumer that logs a
+  copy would be a new process per entry, forever. If your write should set
+  something else going, set it going yourself.
 
 ## What is in here
 
@@ -181,5 +184,8 @@ files reminders leaves litter in a real person's list.
 
 ## Installing
 
-`./scripts/install.sh` puts these on `PATH` next to `ppr` itself. To skip them:
-`./scripts/install.sh --no-plugins`.
+`./scripts/install.sh` puts these on `PATH` next to `ppr` itself, as symlinks
+into this repo, so they update with a `git pull`. Anything already sitting
+under one of those names that is not one of ours is left alone — putting your
+own `ppr-notify` there is the supported way to change what `--notify` means.
+To skip them entirely: `./scripts/install.sh --no-plugins`.
