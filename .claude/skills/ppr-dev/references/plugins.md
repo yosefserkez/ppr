@@ -103,7 +103,13 @@ flags go through it:
   notifications at the end of it;
 - `drainChildren()` waits two seconds at the end of a command, then unrefs and
   lets the child finish. Not a kill: a courier stopped halfway through is a
-  copy that exists nowhere.
+  copy that exists nowhere;
+- every child is stamped with `PPR_HOOK_DEPTH`, and a ppr that sees it wires
+  no hook runner (L24). **ppr fans out once, from the command a person ran.**
+  A hook may write — its write happens exactly as it would have — but it
+  announces nothing, or `hooks: {"entry.created": ["ppr --vault log + …"]}`
+  is a generation of processes per entry. Hooks come from the user layer and
+  apply to every vault, so a second vault is not an escape.
 
 ## The porcelain: friendly flags, conventional names
 

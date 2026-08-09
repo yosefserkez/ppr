@@ -364,6 +364,14 @@ and lets the child finish on its own. Hooks and the plugin-backed flags both go
 through it, so there is exactly one answer to "what happens when it is missing,
 slow, or broken".
 
+**ppr fans out once, from the command a person ran.** Every child is stamped
+with `PPR_HOOK_DEPTH`, and a ppr that sees it wires no hook runner at all
+(L24). A hook's writes still happen — a hook is allowed to write, that is
+most of what one is for — they simply announce nothing, so a hook that logs
+into another vault is one extra entry rather than a generation of processes
+per entry. A consumer that wants a second thing to happen runs it itself,
+which is a line of shell that says so.
+
 **The plugins are not part of ppr.** `plugins/ppr-notify`,
 `plugins/ppr-reminders-push`, and `plugins/ppr-contact` are ordinary programs
 that ppr ships and `install.sh` puts on PATH; nothing in `packages/` imports
@@ -554,13 +562,17 @@ usual reason a dry run rots. Only the commands that write *outside* Storage
 handle it themselves: `init`, `config set`, `hooks add/rm`, `schedule add/rm`,
 each printing the artifact it would have written. Anything that downloads or
 installs calls `refuseDryRun()` instead, because there is no honest preview of
-an install — `ppr doctor` is the dry run for `ppr setup`.
+an install — `ppr doctor` is the dry run for `ppr setup`. `ppr edit` refuses
+for the same reason from the other direction: its editor opens the *entry*
+rather than a scratch file (L8), so saving is the write and there is no seam
+left to hold it back.
 
 Three things it must never fake, or the preview is worth nothing: **the model
 still runs** (a preview of `ppr dump` assembled from a fake answer is fiction,
 and the distiller's output is the entire question), **`$EDITOR` still opens**
-(composing is not an effect; saving is), and **an error is still an error** with
-its exit code. The plan is dim on stderr *after* the command's own output, so
+(composing is not an effect; saving is — which is exactly why `ppr edit`, where
+they are the same act, is refused rather than previewed), and **an error is
+still an error** with its exit code. The plan is dim on stderr *after* the command's own output, so
 `--dry-run --json` prints exactly the JSON a real run would (I10) — which on a
 write command is the entry that would have been created, and is the natural
 preview.
@@ -653,7 +665,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 334 tests, plugins included. No network. No TTY required.
+pnpm test        # 336 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -915,6 +927,19 @@ mark is a claim about *everything before* a point, and only a run that read
 from the mark (or `--all`) is entitled to make it. This is L21 with a
 different trigger, and the same asymmetry decides it: a mark left behind
 costs a re-scan that reconciliation absorbs, a mark moved wrongly costs words.
+
+**L24. A hook that writes fires hooks.** `hooks: { "entry.created":
+["ppr --vault log + $PPR_EVENT"] }` reads like careful design — a second
+vault, so nothing loops. It is a fork bomb: hooks are read from the *user*
+layer, so they apply to every vault, and the child's write fires
+`entry.created` again, and each generation is a new process. Nothing in a
+payload distinguishes the cascade somebody wanted from the one that eats the
+machine, so the line is drawn where it can be — ppr fans out once, from the
+command a person ran, and `PPR_HOOK_DEPTH` on every child is how the next one
+knows not to. The general shape: **anything that triggers on a write must not
+be reachable from a write it caused**, and the marker belongs on the spawn
+rather than in the payload, because the payload is what a consumer is allowed
+to rewrite.
 
 **L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
 announced once in dim text that scrolled away, with no marker showing you were

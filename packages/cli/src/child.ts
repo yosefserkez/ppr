@@ -41,6 +41,27 @@ import { color, errline } from './render.js';
  */
 const DRAIN_MS = 2000;
 
+/**
+ * How deep in a chain of ppr-started programs this process is.
+ *
+ * Stamped on every child, because the one thing a consumer is most likely to
+ * do is write something down — and in ppr, writing something down is what
+ * fires hooks. `hooks: { "entry.created": ["ppr --vault log + $something"] }`
+ * is a reasonable-looking line that, without a marker, spawns a generation of
+ * processes per entry forever: hooks are read from the *user* layer, so they
+ * apply to every vault, and pointing the hook at a different one does not
+ * escape it.
+ *
+ * A number rather than a flag so the chain can say how long it is, but the
+ * rule reading it only ever asks whether it is zero.
+ */
+export const CHILD_DEPTH_ENV = 'PPR_HOOK_DEPTH';
+
+export function childDepth(env: NodeJS.ProcessEnv = process.env): number {
+  const depth = Number(env[CHILD_DEPTH_ENV]);
+  return Number.isFinite(depth) && depth > 0 ? Math.floor(depth) : 0;
+}
+
 export interface ChildResult {
   ok: boolean;
   /**
@@ -94,7 +115,8 @@ export function runChild(command: string, opts: ChildOptions = {}): Promise<Chil
       shell: opts.shell ?? false,
       // Discard stdout: a consumer's chatter is not ppr's output (I10).
       stdio: ['pipe', 'ignore', 'pipe'],
-      env: { ...process.env, ...opts.env },
+      // Depth last: a caller cannot spoof its way back to generation zero.
+      env: { ...process.env, ...opts.env, [CHILD_DEPTH_ENV]: String(childDepth() + 1) },
     });
   } catch (err) {
     return Promise.resolve({ ok: false, hint: (err as Error).message });

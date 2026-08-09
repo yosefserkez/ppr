@@ -252,6 +252,13 @@ async function writeScript(dir, name, body) {
   return `"${path}"`;
 }
 
+/**
+ * Long enough for a child ppr let go of at the end of a command to finish.
+ * The parent drains for two seconds and then unrefs, so anything asserted
+ * about what a hook did has to outwait that.
+ */
+const settle = (ms = 2500) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** The *user* config layer — the only place a hook is ever honoured from. */
 async function writeUserConfig(dir, data) {
   await mkdir(join(dir, '.xdg', 'ppr'), { recursive: true });
@@ -342,6 +349,39 @@ test('a hook that fails costs one line, not the exit code and not stdout', async
     // Whatever a hook prints is its own business, never ppr's output (I10).
     assert.ok(JSON.parse(stdout).id);
     assert.doesNotMatch(stdout, /garbage/);
+  });
+});
+
+test('a hook that writes is one more entry, not a generation of processes', async () => {
+  await withVault(async (dir) => {
+    const log = join(dir, 'generations');
+    // Self-capping on purpose: if the guard ever goes, this test must still
+    // stop rather than fork-bomb whoever is running the suite. Three lines is
+    // already proof of a cascade; one line is proof there was none.
+    const hook = await writeScript(
+      dir,
+      'writes-back',
+      [
+        `echo fired >> "${log}"`,
+        `[ "$(wc -l < "${log}")" -ge 3 ] && exit 0`,
+        `"${process.execPath}" "${BIN}" + "written by the hook" >/dev/null 2>&1`,
+      ].join('\n'),
+    );
+    await writeUserConfig(dir, { hooks: { 'entry.created': [hook] } });
+
+    const { code } = await ppr(dir, ['+', 'the entry a person actually typed']);
+    assert.equal(code, 0);
+    await settle();
+
+    // The write the hook made still happened — suppressing the cascade is not
+    // suppressing the consumer.
+    const entries = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entries.length, 2, 'the hook wrote its entry');
+    assert.equal(
+      (await readFile(log, 'utf8')).trim().split('\n').length,
+      1,
+      'and that entry announced nothing, so there is no second generation',
+    );
   });
 });
 

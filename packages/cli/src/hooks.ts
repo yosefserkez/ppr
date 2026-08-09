@@ -32,7 +32,7 @@
 
 import { eventJson, isEventName, type VaultEvent, type VaultEventName } from '@ppr/core';
 import { globalConfigPath, readConfigLayer, writeConfigLayer } from '@ppr/core/node';
-import { runChild } from './child.js';
+import { childDepth, runChild } from './child.js';
 import { dryRun, would } from './dryrun.js';
 import { color, errline } from './render.js';
 
@@ -132,8 +132,22 @@ export async function saveHooks(hooks: Hooks, change?: string): Promise<string> 
  * run for ten minutes, and forty pending notifications delivered at the end of
  * it are forty notifications about things you already watched happen.
  * `drainChildren()` at the end of the command is what bounds the waiting.
+ *
+ * **A hook's own writes announce nothing.** The likeliest thing a consumer
+ * does is write something down, and writing something down is what fires
+ * hooks — so `hooks: { "entry.created": ["ppr --vault log + …"] }` would spawn
+ * a generation of processes per entry, forever, and pointing it at a second
+ * vault does not help because hooks come from the user layer and apply to all
+ * of them. One level of cascade is composition and unbounded cascade is a
+ * fork bomb, and nothing in the payload can tell the two apart — so the line
+ * is drawn where it can be: ppr fans out once, from the command the person
+ * ran. A hook that wants a second thing to happen runs it itself, which is
+ * one line of shell and says so out loud. The write still happens; only the
+ * announcement stops (I13 — nothing over there may drive what happens in
+ * here).
  */
 export function hookRunner(hooks: Hooks): ((event: VaultEvent) => void) | undefined {
+  if (childDepth()) return undefined;
   if (!Object.keys(hooks).length) return undefined;
 
   return (event: VaultEvent) => {

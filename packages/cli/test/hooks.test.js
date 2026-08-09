@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHooks } from '../dist/hooks.js';
+import { CHILD_DEPTH_ENV } from '../dist/child.js';
+import { hookRunner, parseHooks } from '../dist/hooks.js';
 
 /**
  * What a `hooks` block means, with no config file and no subprocess involved.
@@ -34,4 +35,28 @@ test('nonsense in the file is ignored rather than obeyed or fatal', () => {
   assert.deepEqual(parseHooks({ 'entry.created': ['  ppr-notify  ', 7] }), {
     'entry.created': ['ppr-notify'],
   });
+});
+
+/**
+ * The fan-out stops at one generation. What a hook does with the vault is its
+ * business; what it may not do is set the whole machinery going again, because
+ * hooks come from the user layer and therefore apply to every vault — so a
+ * hook that logs into a *second* vault is the fork bomb too. The end-to-end
+ * proof is in cli.test.js; this is the rule itself.
+ */
+test('a ppr running inside a hook wires no hooks of its own', () => {
+  const hooks = { 'entry.created': ['ppr-notify'] };
+  assert.equal(typeof hookRunner(hooks), 'function');
+
+  const before = process.env[CHILD_DEPTH_ENV];
+  try {
+    process.env[CHILD_DEPTH_ENV] = '1';
+    assert.equal(hookRunner(hooks), undefined);
+    // Junk in the marker is not a licence to fan out; it is also not a crash.
+    process.env[CHILD_DEPTH_ENV] = 'nonsense';
+    assert.equal(typeof hookRunner(hooks), 'function');
+  } finally {
+    if (before === undefined) delete process.env[CHILD_DEPTH_ENV];
+    else process.env[CHILD_DEPTH_ENV] = before;
+  }
 });

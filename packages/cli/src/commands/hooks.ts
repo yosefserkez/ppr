@@ -64,7 +64,11 @@ Examples:
 
 Hooks are read from ~/.config/ppr/config.json and nowhere else: they run shell
 commands, and a vault is a repo people clone. Editing that file by hand does
-the same thing this command does.`,
+the same thing this command does.
+
+A hook may write to a vault, and that write happens — but it fires no further
+hooks. ppr fans out once, from the command you ran. If your hook wants a
+second thing to happen, it runs it itself.`,
     )
     .action(async (name: string, words: string[], _flags: unknown, self: Command) => {
       const event = asEvent(name);
