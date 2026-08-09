@@ -278,6 +278,50 @@ test('the extraction budget grows with the batch it is given', async () => {
   assert.ok(extraction.maxTokens >= 3000, `budget was ${extraction.maxTokens} for a 6k-char batch`);
 });
 
+test('a batch too large for one prompt is split, and no entry is split with it', async () => {
+  // The other half of the lossy backfill. A month of entries in one call fits
+  // any context window and still extracts badly — attention per entry is the
+  // scarce resource — so learn chunks at EXTRACT_CHUNK_CHARS. Nothing measured
+  // that, which is how a batch size that reads two thirds of a vault shipped.
+  const seen = [];
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ memories: [] }), { record: seen }),
+  });
+
+  const entries = [];
+  for (let i = 0; i < 6; i++) {
+    entries.push(
+      await vault.add({
+        kind: 'log',
+        body:
+          `Deploy note ${i}. ` +
+          `The staging database is on postgres 14 and the search index moved to typesense. `.repeat(12),
+      }),
+    );
+  }
+  await vault.learn();
+
+  const isExtraction = (req) => /durable facts/.test(req.system);
+  const extractions = seen.filter(isExtraction);
+  assert.ok(extractions.length > 1, `6 kilobytes of entries went out as ${extractions.length} call(s)`);
+
+  for (const entry of entries) {
+    const carrying = extractions.filter((req) => req.prompt.includes(`[${entry.id}]`));
+    assert.equal(carrying.length, 1, `${entry.id} appeared in ${carrying.length} prompts`);
+    // Whole, not clipped at the chunk boundary: half an entry is exactly the
+    // kind of silent loss the chunking exists to prevent.
+    assert.ok(carrying[0].prompt.includes(entry.body), 'the entry arrived truncated');
+  }
+
+  // Piped text is its own source with no entry id, so it gets its own call
+  // rather than riding along in whichever chunk happened to be last.
+  seen.length = 0;
+  await vault.learn({ text: 'Rae took over billing from Sam.' });
+  const piped = seen.filter(isExtraction);
+  assert.equal(piped.length, 1);
+  assert.match(piped[0].prompt, /Rae took over billing/);
+});
+
 test('facts live outside the journal tree', async () => {
   const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
   const [fact] = await vault.remember('emily likes chocolate');
