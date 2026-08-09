@@ -98,7 +98,7 @@ Examples:
   ppr thread 6jc6ad                  the thread this entry is on
   ppr thread latest                  what the last thing you wrote continues
   ppr thread redis --plain           just the timeline, offline
-  ppr thread redis -q | ppr text     the entries themselves, piped
+  ppr thread redis -q | xargs ppr text   the entries themselves, piped
 
 Seeding: an id, \`latest\`, or \`^2\` names one entry; anything else is
 searched for, and the hits seed the walk. From there ppr follows what you
