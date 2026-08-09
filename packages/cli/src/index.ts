@@ -35,7 +35,14 @@ import {
   todosCommand,
   windowCommands,
 } from './commands/browse.js';
-import { askCommand, briefCommand, contextCommand, memoryCommand, recapCommand } from './commands/think.js';
+import {
+  askCommand,
+  briefCommand,
+  contextCommand,
+  memoryCommand,
+  recapCommand,
+  threadCommand,
+} from './commands/think.js';
 import { aiCommand, configCommand, initCommand, reindexCommand } from './commands/settings.js';
 import { doctorCommand, setupCommand } from './commands/setup.js';
 import { scheduleCommand } from './commands/schedule.js';
@@ -101,6 +108,7 @@ program.addCommand(exportCommand());
 
 // Think
 program.addCommand(recapCommand());
+program.addCommand(threadCommand());
 program.addCommand(briefCommand());
 program.addCommand(askCommand());
 program.addCommand(contextCommand());
@@ -197,10 +205,10 @@ Examples:
   ppr search deploy --since 30d                   find it later
   ppr ask "why did we drop redis?"                answer from your own entries
   ppr recap --since 7d --style weekly             what happened
+  ppr thread coffee subscription                  pick up where you left off
   ppr memory learn                                keep what your entries say is true
   ppr brief                                       what is coming up
   ppr context redis | claude -p "what now?"       hand another tool what ppr knows
-  ppr plugins                                     what is wired to ppr, and where
   vim $(ppr path latest)                          it is just markdown
 `,
 );

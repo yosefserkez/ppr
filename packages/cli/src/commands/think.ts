@@ -13,14 +13,26 @@ import {
   truncate,
   type Fact,
   type LearnResult,
+  type Thread,
   type Upcoming,
+  type Vault,
   type VaultContext,
 } from '@ppr/core';
 import { announceBrief } from '../porcelain.js';
 import { dayFlag, filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
+import { browse, canBrowse } from '../ui/browser.js';
 import { select } from '../ui/select.js';
-import { color, entryJson, json, out, errline, shortenCitations, shortId } from '../render.js';
+import {
+  color,
+  entryJson,
+  json,
+  out,
+  errline,
+  shortenCitations,
+  shortId,
+  threadTimeline,
+} from '../render.js';
 
 type RecapStyle = 'standup' | 'weekly' | 'narrative';
 
@@ -61,6 +73,122 @@ export function recapCommand(): Command {
       }),
   );
   return cmd;
+}
+
+/**
+ * `ppr thread` — pick up a line of thought where you left it.
+ *
+ * `recap` is a window and `search` is a list of matches; neither answers "where
+ * had I got to", which is the question you have when something comes back after
+ * eight months. The thread itself is the graph's answer and needs no model
+ * (`core/src/thread.ts`); a model, when there is one, turns the sequence into
+ * the story of it — and says where it stopped.
+ */
+export function threadCommand(): Command {
+  return new Command('thread')
+    .description('follow one line of thought across days or years, oldest first')
+    .argument('<query...>', 'what it was about, or an entry ref')
+    .option('-p, --plain', 'print the timeline: no story, no browser')
+    .option('--no-summary', 'skip the story even when a model is configured')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr thread coffee subscription     everything carrying that thought
+  ppr thread 6jc6ad                  the thread this entry is on
+  ppr thread latest                  what the last thing you wrote continues
+  ppr thread redis --plain           just the timeline, offline
+  ppr thread redis -q | ppr text     the entries themselves, piped
+
+Seeding: an id, \`latest\`, or \`^2\` names one entry; anything else is
+searched for, and the hits seed the walk. From there ppr follows what you
+already wrote — [[wikilinks]] a long way, shared tags and titles one step —
+so a thread is what you connected, never what a model guessed.
+
+With a model, the story comes first and the timeline under it. --no-summary
+keeps the timeline alone; --plain also keeps the browser shut, which is what
+a pipe and --json get anyway.
+
+--json gives { "query", "seededBy", "entries", "facts", "gaps" }. Each entry
+carries the usual fields plus "reason" (seed | matched | linked | related),
+"why", "hops", and "score"; each gap is { "after", "before", "days" } —
+"after" and "before" are the entry ids either side of the silence.`,
+    )
+    .action(async (query: string[], flags: { plain?: boolean; summary?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        const thread = vault.thread(query.join(' '));
+        const g = globals(self);
+
+        if (g.json) {
+          return json({
+            query: thread.query,
+            seededBy: thread.seededBy,
+            entries: thread.entries.map((m) => ({
+              ...entryJson(m.entry),
+              reason: m.reason,
+              why: m.why,
+              hops: m.hops,
+              score: m.score,
+            })),
+            facts: thread.facts.map((f) => factJson(f.fact)),
+            gaps: thread.gaps,
+          });
+        }
+        if (g.quiet) return void out(thread.entries.map((m) => m.entry.id).join('\n'));
+        // One entry is not a thread, and dressing it up as one would be the
+        // whole feature lying at the first opportunity.
+        if (thread.entries.length < 2) return void nearestInstead(vault, thread);
+
+        const wantsStory = flags.summary !== false && !flags.plain && vault.hasAI;
+        if (wantsStory) {
+          const story = await vault.threadRecap(thread);
+          if (story.ai) out(shortenCitations(story.text));
+          else errline(color.dim('The model returned nothing usable — the timeline is below.'));
+        }
+        // Same discipline as `ppr ls`: the browser is a renderer, so a pipe,
+        // `--json`, `-q`, and `--plain` see exactly what they saw before it
+        // existed (I4). Interactively it *is* the timeline, so nothing is
+        // printed twice.
+        if (canBrowse({ ...g, ...flags }, vault.config.display.interactive)) {
+          return browse(vault, `thread: ${truncate(thread.query, 40)}`, thread.entries.map((m) => m.entry));
+        }
+        if (wantsStory) out(color.dim('\n— then the timeline\n'));
+        out(threadTimeline(thread));
+      }),
+    );
+}
+
+/**
+ * What to say when there is no thread.
+ *
+ * The nearest search hits, and the word "no". A recall tool that answers a
+ * question it cannot answer is worse than one that says so — and the hits are
+ * the honest version of what the user was reaching for, so they are offered as
+ * somewhere to start rather than as the thread itself.
+ */
+function nearestInstead(vault: Vault, thread: Thread): void {
+  const only = thread.entries[0];
+  out(
+    color.dim(
+      only
+        ? `No thread here — nothing else connects to ${truncate(only.entry.title, 48)}.`
+        : `No thread here — nothing matches "${truncate(thread.query, 48)}".`,
+    ),
+  );
+
+  // Whatever else looks like the entry that was found — searching the words
+  // again would only return the seed, and an id returns nothing at all.
+  const text = only ? only.entry.title : thread.query;
+  const near = vault
+    .search(text, { limit: 6 })
+    .filter((hit) => hit.entry.id !== only?.entry.id)
+    .slice(0, 5);
+  if (!near.length) return;
+
+  out(`\n${color.bold('Nearest')}`);
+  for (const hit of near) {
+    out(`  ${color.dim(shortId(hit.entry.id))}  ${truncate(hit.entry.title, 56)}`);
+  }
 }
 
 /**

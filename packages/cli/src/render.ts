@@ -1,6 +1,15 @@
 import pc from 'picocolors';
-import type { Entry, SearchHit } from '@ppr/core';
-import { entryJson, formatDay, formatTime, plainText, relativeAge, shortId, truncate } from '@ppr/core';
+import type { Entry, SearchHit, Thread } from '@ppr/core';
+import {
+  entryJson,
+  formatDay,
+  formatTime,
+  gapWords,
+  plainText,
+  relativeAge,
+  shortId,
+  truncate,
+} from '@ppr/core';
 
 export interface RenderOptions {
   json?: boolean;
@@ -114,6 +123,53 @@ export function entryDetail(entry: Entry, now: Date): string {
   if (entry.tags.length) head.push(c.cyan(entry.tags.map((t) => `#${t}`).join(' ')));
   if (entry.source) head.push(c.dim(entry.source));
   return `${head.join('\n')}\n\n${entry.body}`;
+}
+
+/** `Fri 06 Feb 2026` — a thread can span years, so the year is not optional. */
+const threadDay = (entry: Entry): string => {
+  const date = new Date(entry.created);
+  return `${formatDay(date)} ${date.getFullYear()}`;
+};
+
+/**
+ * A thread as a timeline: one line per entry, with the silences marked.
+ *
+ * Dates rather than ages, because "3mo" twice does not tell you the two
+ * entries are eighteen months apart — and the shape of time is the thing this
+ * view exists to show. Facts sit underneath in their own block: they are
+ * conclusions, not moments, and a fact given a position in a timeline is the
+ * mistake I12 is about.
+ */
+export function threadTimeline(thread: Thread): string {
+  if (!thread.entries.length) return c.dim('No thread here.');
+  const gaps = new Map(thread.gaps.map((g) => [g.before, g.days]));
+  // Padded on the visible text, coloured after: a width measured on a string
+  // that already holds escape codes is not a width (L3).
+  const width = thread.entries.reduce((w, m) => Math.max(w, truncate(m.entry.title, 52).length), 0);
+  const indent = ' '.repeat(threadDay(thread.entries[0]!.entry).length);
+
+  const lines: string[] = [];
+  for (const member of thread.entries) {
+    const gap = gaps.get(member.entry.id);
+    if (gap !== undefined) lines.push('', `${indent}  ${c.dim(`·  ${gapWords(gap)}`)}`, '');
+    lines.push(
+      [
+        c.dim(threadDay(member.entry)),
+        kindTag(member.entry.kind),
+        c.dim(shortId(member.entry.id)),
+        truncate(member.entry.title, 52).padEnd(width),
+        c.dim(member.why),
+      ].join('  '),
+    );
+  }
+
+  if (thread.facts.length) {
+    lines.push('', c.bold('What you concluded'));
+    for (const { fact } of thread.facts) {
+      lines.push(`  ${c.dim(shortId(fact.id))}  ${truncate(fact.text, 70)}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 export function searchList(hits: SearchHit[], now: Date): string {

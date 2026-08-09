@@ -597,9 +597,19 @@ test('export hands over the facts too, unless you asked for a kind', async () =>
 test('list commands stay plain when there is no terminal', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['alpha entry']);
+    await ppr(dir, ['+', 'alpha entry again, following [[alpha entry]]']);
+    await ppr(dir, ['+', 'still on [[alpha entry]] — alpha entry three']);
 
     // The browser must never engage on a pipe — this is what keeps ppr scriptable.
-    for (const args of [['ls'], ['ls', '--plain'], ['today'], ['browse'], ['search', 'alpha']]) {
+    for (const args of [
+      ['ls'],
+      ['ls', '--plain'],
+      ['today'],
+      ['browse'],
+      ['search', 'alpha'],
+      ['thread', 'alpha entry'],
+      ['thread', 'alpha entry', '--plain'],
+    ]) {
       const { code, stdout } = await ppr(dir, args);
       assert.equal(code, 0, `${args.join(' ')} exited ${code}`);
       assert.doesNotMatch(stdout, /\[\?1049h/, `${args.join(' ')} opened the alt screen`);
@@ -1609,5 +1619,142 @@ test('nothing to settle is a normal outcome, not an error', async () => {
     assert.equal(code, 0);
     assert.match(stdout, /Nothing to settle/);
     assert.equal(JSON.parse((await ppr(dir, ['memory', 'review', '--json'])).stdout).length, 0);
+  });
+});
+
+/**
+ * A vault holding one real story: a business idea worked through over a
+ * fortnight, dropped for half a year, picked up again — with the tags and the
+ * links drifting the way they actually do, and noise around it that shares a
+ * word and nothing else.
+ *
+ * Written as files rather than through `ppr +`, because the whole point is
+ * that the entries sit months apart and a capture command can only write
+ * today. Days are relative so the fixture never goes stale, and every one of
+ * them is in the past.
+ */
+async function coffeeStory(dir) {
+  const entry = async (name, daysAgo, title, kind, tags, body) =>
+    writeFile(
+      join(dir, 'entries', `${name}.md`),
+      `---\nkind: ${kind}\ntitle: "${title}"\ncreated: ${dayFromNow(-daysAgo)}T09:00:00\n${tags.length ? `tags: [${tags.join(', ')}]\n` : ''}---\n\n${body}\n`,
+    );
+
+  await entry('s1', 320, 'Coffee subscription idea', 'log', ['coffee', 'idea'],
+    'Idea: a monthly subscription shipping office-sized bags to small studios.');
+  await entry('s2', 318, 'What the beans actually cost', 'log', ['coffee', 'idea'],
+    'Rang two wholesalers about the [[Coffee subscription idea]]. £11-14/kg at the volumes I could commit to.');
+  await entry('s3', 305, 'Talked to a roaster', 'note', ['coffee', 'idea'],
+    'The roaster on Mare Street would white-label the [[Coffee subscription idea]] at 40 bags a month.');
+  await entry('s4', 290, 'Unit economics, roughly', 'note', ['coffee', 'numbers'],
+    'Worked the numbers after [[Talked to a roaster]]. Margin is 22% at 40 bags, 31% at 120.');
+  await entry('s5', 275, 'Shelving the coffee idea', 'log', ['coffee'],
+    'Parking it. [[Unit economics, roughly]] says it only works above 200 subscribers.');
+  // Half a year of silence, and then the thing comes back.
+  await entry('s6', 90, 'Back to the coffee idea', 'log', ['coffee', 'business'],
+    'Two studios asked where I get my beans. Reopening [[Shelving the coffee idea]].');
+  await entry('s7', 83, 'Subscription versus one-off boxes', 'note', ['coffee', 'business'],
+    'Following [[Back to the coffee idea]]: a one-off box has no retention problem and no margin either.');
+  await entry('s8', 70, 'Where the coffee idea stands', 'note', ['business'],
+    'After [[Subscription versus one-off boxes]] the open question is whether referrals get me to 200.');
+  // Dealt with, and still part of the story.
+  await writeFile(
+    join(dir, 'entries', 'done.md'),
+    `---\nkind: reminder\ntitle: "email the roaster about wholesale pricing"\ncreated: ${dayFromNow(-78)}T09:00:00\ndate: ${dayFromNow(-76)}\nstatus: done\n---\n\nemail the roaster about pricing for [[Back to the coffee idea]]\n`,
+  );
+
+  await entry('n1', 319, 'The office coffee machine broke again', 'log', ['office'],
+    'Third time this quarter. The office coffee machine is done for.');
+  await entry('n2', 289, 'Blocked on the auth review', 'log', ['work'], 'Blocked on the auth review again.');
+  await entry('n3', 89, 'The redis migration went badly', 'log', ['infra'], 'Rolled back the redis migration at 2am.');
+  await entry('n4', 82, 'Renewed the design tool subscription', 'log', ['tools'],
+    'Renewed the annual subscription for the design tool.');
+}
+
+test('a thread picks up the story it was about, and leaves the noise alone', async () => {
+  await withVault(async (dir) => {
+    await coffeeStory(dir);
+    const { code, stdout } = await ppr(dir, ['thread', 'coffee', 'subscription']);
+    assert.equal(code, 0);
+
+    for (const title of [
+      'Coffee subscription idea',
+      'What the beans actually cost',
+      'Talked to a roaster',
+      'Unit economics, roughly',
+      'Shelving the coffee idea',
+      'Back to the coffee idea',
+      'Subscription versus one-off boxes',
+      'Where the coffee idea stands',
+      'email the roaster about wholesale pricing',
+    ]) {
+      assert.match(stdout, new RegExp(title), `${title} is part of the story`);
+    }
+    // A shared word, a shared tag nobody else has, and a coincidence of the
+    // word "subscription" are all not threads.
+    for (const noise of ['coffee machine', 'auth review', 'redis migration', 'design tool']) {
+      assert.doesNotMatch(stdout, new RegExp(noise), `${noise} is not part of it`);
+    }
+
+    // Oldest first, and the half-year silence is visible in the middle of it.
+    assert.ok(
+      stdout.indexOf('Coffee subscription idea') < stdout.indexOf('Where the coffee idea stands'),
+      'a thread is read forwards',
+    );
+    assert.match(stdout, /months later/, 'the shape of time is in the offline view too');
+    assert.doesNotMatch(stdout, /\[\?1049h/, 'the browser never engages on a pipe (I4)');
+  });
+});
+
+test('a thread is the same thread to a script, whatever it looks like on a terminal', async () => {
+  await withVault(async (dir) => {
+    await coffeeStory(dir);
+    const { stdout } = await ppr(dir, ['thread', 'coffee', 'subscription', '--json']);
+    const thread = JSON.parse(stdout);
+
+    assert.equal(thread.query, 'coffee subscription');
+    assert.equal(thread.seededBy, 'query');
+    assert.equal(thread.entries.length, 9);
+    assert.ok(thread.entries.every((e) => e.id && e.reason && e.why));
+    assert.ok(thread.entries.some((e) => e.reason === 'linked' && e.hops >= 1));
+    assert.equal(thread.gaps.length, 1);
+    assert.ok(thread.gaps[0].days > 150, 'the silence is measured, not described');
+    assert.ok(
+      thread.entries.some((e) => e.id === thread.gaps[0].before),
+      'a gap names the entries either side of it',
+    );
+
+    // -q is the pipe: ids, in the same order, and nothing else.
+    const quiet = await ppr(dir, ['thread', 'coffee', 'subscription', '-q']);
+    assert.deepEqual(
+      quiet.stdout.trim().split('\n'),
+      thread.entries.map((e) => e.id),
+    );
+
+    // An id names one entry, and the walk from it finds the same story.
+    const byRef = JSON.parse((await ppr(dir, ['thread', thread.entries[4].id, '--json'])).stdout);
+    assert.equal(byRef.seededBy, 'ref');
+    assert.equal(byRef.entries.length, 9);
+  });
+});
+
+test('no thread is said out loud, with the nearest entries instead of an invented one', async () => {
+  await withVault(async (dir) => {
+    await coffeeStory(dir);
+
+    const missing = await ppr(dir, ['thread', 'quantum', 'computing']);
+    assert.equal(missing.code, 0, 'nothing to follow is not an error');
+    assert.match(missing.stdout, /No thread here/);
+
+    // One entry mentions redis, and one entry is not a line of thought.
+    const thin = await ppr(dir, ['thread', 'redis']);
+    assert.match(thin.stdout, /No thread here/);
+    assert.doesNotMatch(thin.stdout, /months later/);
+
+    // Something that does connect, offered as a place to start.
+    const near = await ppr(dir, ['thread', 'machine']);
+    assert.match(near.stdout, /No thread here/);
+    assert.match(near.stdout, /Nearest/);
+    assert.match(near.stdout, /coffee machine/);
   });
 });
