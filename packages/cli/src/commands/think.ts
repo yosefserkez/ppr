@@ -73,8 +73,7 @@ export function briefCommand(): Command {
     .option('--plain', 'skip the model and print the dates')
     .action(async (flags: { within?: string; plain?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
-        const withinDays = Number(flags.within ?? 30);
-        if (!Number.isFinite(withinDays)) throw new PprError('EINVALID', '--within must be a number');
+        const withinDays = number('--within', flags.within, 30);
         const g = globals(self);
 
         if (flags.plain || g.json) {
@@ -133,8 +132,8 @@ export function contextCommand(): Command {
     .action(async (query: string[], flags: { limit?: string; within?: string; bodies?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         const result = vault.context(query.join(' '), {
-          limit: Number(flags.limit ?? 12),
-          withinDays: Number(flags.within ?? 30),
+          limit: number('--limit', flags.limit, 12),
+          withinDays: number('--within', flags.within, 30),
         });
         if (globals(self).json) {
           return json({
@@ -237,7 +236,7 @@ export function memoryCommand(): Command {
     .action(async (flags: { limit?: string; all?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         const found = vault.facts(flags.all ? { includeRetired: true } : {});
-        const facts = flags.limit ? found.slice(0, Number(flags.limit)) : found;
+        const facts = flags.limit ? found.slice(0, number('--limit', flags.limit, 0)) : found;
         const g = globals(self);
 
         if (g.json) return json(facts.map(factJson));
@@ -441,6 +440,24 @@ function summarise(result: LearnResult): string {
   // whole point of tracking it (L21).
   const stuck = `${result.unreadable} the model could not read`;
   return parts.length ? `${parts.join(' · ')}\n${stuck} — still queued for the next run.` : `${stuck}.`;
+}
+
+/**
+ * A numeric flag, refused rather than ignored when it is not a number.
+ *
+ * `Number('abc')` is NaN, and NaN quietly means "no limit" to a slice and "no
+ * window" to a filter — so `ppr context --limit abc` printed the whole vault
+ * and `ppr memory ls --limit abc` printed "nothing known yet". The shared
+ * filter flags go through `toQuery`, which has always refused this; these
+ * commands take their own numbers and have to refuse it too.
+ */
+function number(flag: string, value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new PprError('EINVALID', `${flag} must be a number, got "${value}"`);
+  }
+  return parsed;
 }
 
 function parseSince(when: string, now: Date): Date {

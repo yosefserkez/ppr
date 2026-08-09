@@ -783,6 +783,14 @@ test('context hands another tool everything ppr knows, without a model', async (
     assert.equal(parsed.query, 'emily');
     assert.equal(parsed.facts.length, 1);
     assert.ok(parsed.now);
+
+    // NaN is a silent "no limit" to a slice, so a number ppr cannot read has
+    // to be refused rather than passed through as one.
+    for (const argv of [['context', '--limit', 'abc'], ['memory', 'ls', '--limit', 'abc'], ['brief', '--within', 'soon']]) {
+      const bad = await ppr(dir, argv);
+      assert.equal(bad.code, 2, `${argv.join(' ')} was accepted`);
+      assert.match(bad.stderr, /must be a number/);
+    }
   });
 });
 
