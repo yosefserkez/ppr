@@ -402,13 +402,19 @@ export const CASES = [
         // makes a memory layer unusable by another tool.
         mustNot: [['toyota'], ['honda'], ['tesla'], ['bmw'], ['ford']],
         // Every honest way to say it: "I do not know", "I don't know",
-        // "nothing here mentions that", "there is no information about it".
+        // "nothing here mentions that", "there is no information about it",
+        // "I don't have information about that" — the last one scored as a
+        // failure to refuse, which measured this list rather than the model.
         must: [
           ['not', 'know'],
           ["don't", 'know'],
           ['nothing'],
           ['no ', 'information'],
           ['no ', 'mention'],
+          ["don't have"],
+          ['do not have'],
+          ['not specified'],
+          ['unknown'],
           ['not say'],
         ],
         anyMust: true,
