@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { EVENT_NAMES } from '@ppr/core';
 import { findVault, loadConfig } from '@ppr/core/node';
 import { globals } from '../context.js';
-import { resolveCommand, scanExternals } from '../external.js';
+import { commandProgram, resolveCommand, scanExternals } from '../external.js';
 import { loadHooks } from '../hooks.js';
 import { NOTIFY_PLUGIN, PUSH_PLUGIN } from '../porcelain.js';
 import { color, json, out, table } from '../render.js';
@@ -108,7 +108,7 @@ function eventRows(hooks: Record<string, string[]>): Array<{
       command,
       // The first word, because a hook is a shell string and may carry its own
       // arguments and pipes — what has to exist is the program at the front.
-      path: resolveCommand(command.split(/\s+/)[0]!),
+      path: resolveCommand(commandProgram(command)),
     })),
   );
 }

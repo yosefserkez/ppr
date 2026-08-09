@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { EVENT_NAMES, PprError, isEventName, type VaultEventName } from '@ppr/core';
 import { globalConfigPath } from '@ppr/core/node';
 import { globals } from '../context.js';
-import { resolveCommand } from '../external.js';
+import { commandProgram, resolveCommand } from '../external.js';
 import { loadHooks, saveHooks, withHook, withoutHook, type Hooks } from '../hooks.js';
 import { color, errline, json, out, table } from '../render.js';
 
@@ -87,7 +87,7 @@ second thing to happen, it runs it itself.`,
       // A warning, not an error: people wire up the thing they are about to
       // install, and refusing would make `ppr hooks add` useless in a dotfiles
       // script. A hook that is missing when it fires costs one stderr line.
-      const first = command.split(/\s+/)[0]!;
+      const first = commandProgram(command);
       if (!resolveCommand(first)) {
         errline(color.dim(`Note: ${first} is not on your PATH yet.`));
       }
@@ -132,7 +132,7 @@ function rows(hooks: Hooks): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const event of EVENT_NAMES) {
     for (const command of hooks[event] ?? []) {
-      const found = resolveCommand(command.split(/\s+/)[0]!);
+      const found = resolveCommand(commandProgram(command));
       out.push([
         `${found ? color.green('✓') : color.yellow('!')} ${event}`,
         found ? command : `${command}  ${color.dim('(not on your PATH)')}`,

@@ -73,6 +73,19 @@ export function resolveCommand(word: string, env: NodeJS.ProcessEnv = process.en
   return findOnPath(word, env);
 }
 
+/**
+ * The program at the front of a command line somebody wrote.
+ *
+ * A hook, a `--pipe`, and a `ppr plugins` row are all handed a *string* rather
+ * than a name, because a configured command carries its own arguments — and
+ * all three then ask the same question of it: is the thing at the front there
+ * to run? Asking it in one place is what stops the answers differing. They
+ * already had: three call sites went through `resolveCommand` and
+ * `schedule --pipe` through `findOnPath`, so an absolute path was reported
+ * missing by one command and present by the others.
+ */
+export const commandProgram = (line: string): string => line.trim().split(/\s+/)[0] ?? '';
+
 /** A `ppr-foo` on PATH: the word that runs it, and where it came from. */
 export interface ExternalCommand {
   /** What you type: `ppr <word>`. */

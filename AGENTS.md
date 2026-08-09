@@ -596,8 +596,8 @@ casts. `exactOptionalPropertyTypes` is off, but conditional spreads
 ### Add a command
 
 1. Write it in the right file under `commands/` (`capture`, `browse`, `think`,
-   `settings`, `setup`, `schedule`, `meta`) — or a new file if it is a new
-   category.
+   `settings`, `setup`, `schedule`, `hooks`, `plugins`, `meta`) — or a new file
+   if it is a new category.
 2. Return a `Command`. Take global options via `globals()`, never
    `cmd.optsWithGlobals()`.
 3. Wrap the body in `withVault(self, async (vault) => …)` so `--vault` and `--no-ai`
@@ -665,7 +665,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 337 tests, plugins included. No network. No TTY required.
+pnpm test        # 338 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -763,10 +763,10 @@ Four case shapes, for the four doors a model comes through. `rounds` (plus
 `brief()` over items whose dates were settled by arithmetic first, so what it
 measures is the wording. `thread` drives `threadRecap()` over a walk that was
 also settled first, so what it measures is whether the story ends where the
-thinking left off rather than summarising the pile. All three pin "today"
-through the vault's `Clock`: an assertion about a date is worth nothing if it
-means something else tomorrow, and "picked it up again after six months" is
-unsayable without one.
+thinking left off rather than summarising the pile. Those last three pin
+"today" through the vault's `Clock`: an assertion about a date is worth
+nothing if it means something else tomorrow, and "picked it up again after six
+months" is unsayable without one.
 
 `recall` is the one that carries a realistic load: eight entries, deliberately
 past `EXTRACT_CHUNK_CHARS` so the batch spans more than one extraction call.
@@ -893,6 +893,12 @@ one of them asked follow-up questions. Both now call `quickLog`. When adding a
 shortcut for an existing command, route it through that command rather than
 reimplementing the short version.
 
+**L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
+announced once in dim text that scrolled away, with no marker showing you were
+inside a prompt at all — so people could not tell ppr's input from their
+shell's, and could not get out. Interactive input needs a visible boundary on
+every line, more than one way to finish, and its instructions kept on screen.
+
 **L20. A second-resolution timestamp cannot order a high-water mark.**
 `created` is stored to the second so it reads well, so two entries written in
 the same second are indistinguishable — and an incremental learner keyed on
@@ -941,11 +947,6 @@ be reachable from a write it caused**, and the marker belongs on the spawn
 rather than in the payload, because the payload is what a consumer is allowed
 to rewrite.
 
-**L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
-announced once in dim text that scrolled away, with no marker showing you were
-inside a prompt at all — so people could not tell ppr's input from their
-shell's, and could not get out. Interactive input needs a visible boundary on
-every line, more than one way to finish, and its instructions kept on screen.
 
 ---
 

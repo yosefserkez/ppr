@@ -502,6 +502,28 @@ test('--dry-run shows the scheduler config without installing one', async () => 
   });
 });
 
+test('one answer to "is that program there", whichever command asks', async () => {
+  await withVault(async (dir) => {
+    // Not on PATH, but plainly there — which is how people write a `--pipe`
+    // and a hook. Four call sites split a command line and asked; one of them
+    // asked `findOnPath`, so it said no about a file it could see.
+    const absolute = join(dir, 'bin', 'my-notify');
+    await writeScript(dir, 'my-notify', 'cat >/dev/null');
+
+    const hook = await ppr(dir, ['hooks', 'add', 'entry.created', `${absolute} --loud`]);
+    assert.doesNotMatch(hook.stderr, /not on your PATH/);
+
+    const piped = await ppr(dir, ['schedule', 'add', 'brief', '--pipe', `${absolute} --loud`, '--dry-run'], {
+      env: { HOME: dir },
+    });
+    assert.doesNotMatch(piped.stderr, /not on your PATH/, 'the same question, the same answer');
+
+    // And a name that really is absent still says so, from both.
+    const missing = await ppr(dir, ['hooks', 'add', 'entry.updated', 'ppr-nope --loud']);
+    assert.match(missing.stderr, /ppr-nope is not on your PATH/, 'the flags are not part of the name');
+  });
+});
+
 test('--dry-run refuses `ppr edit`, because saving is the write', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['+', 'the original words']);

@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { PprError } from '@ppr/core';
 import { globals } from '../context.js';
 import { dryRun, would } from '../dryrun.js';
-import { findOnPath } from '../external.js';
+import { commandProgram, resolveCommand } from '../external.js';
 import { NOTIFY_PLUGIN } from '../porcelain.js';
 import { color, errline, json, out, table } from '../render.js';
 import {
@@ -91,10 +91,12 @@ what is on the other end of it.`,
         ...(g.vault ? { vault: g.vault } : {}),
         ...(pipe ? { pipe } : {}),
       };
-      if (pipe && !findOnPath(pipe.split(/\s+/)[0]!)) {
+      if (pipe && !resolveCommand(commandProgram(pipe))) {
         // Not an error: a scheduled job is allowed to name something you are
-        // about to install. But a silent 8am no-op is worth a word now.
-        errline(color.dim(`Note: ${pipe.split(/\s+/)[0]} is not on your PATH yet.`));
+        // about to install. But a silent 8am no-op is worth a word now. Asked
+        // the way `ppr hooks add` asks it, so `--pipe /usr/local/bin/thing`
+        // gets the same answer from both.
+        errline(color.dim(`Note: ${commandProgram(pipe)} is not on your PATH yet.`));
       }
       const argv = jobArgv(schedule, process.execPath, entryScript());
 
