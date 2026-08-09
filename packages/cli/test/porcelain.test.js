@@ -70,8 +70,8 @@ test('a reminder only leaves the vault when something says it may', () => {
 });
 
 test('a line with no day is never pushed, however loudly it was asked for', () => {
-  // It became an ordinary log, and there is nothing for Reminders to ring
-  // about — so `--push` cannot conjure a reminder out of it.
+  // It is a todo, and a todo has no moment for anything over there to ring
+  // at — so `--push` cannot conjure a reminder out of it.
   assert.deepEqual(pushDecision({ configured: true, asked: true, dated: false, available: true }), {
     push: false,
     reason: 'undated',

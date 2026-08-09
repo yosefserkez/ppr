@@ -146,7 +146,7 @@ const clean = (phrase: string): string =>
  * the middle of a sentence is a sentence, and guessing at it is how a note
  * about "the friday deploy" would acquire a due date it never asked for
  * (L17/I11). When the deterministic read fails, a model gets one attempt, and
- * failing that the words are kept as an ordinary log.
+ * failing that the words are kept as a todo — an intention with no day.
  */
 function extractWhen(text: string, now: Date): { date: string; rest: string } | null {
   const words = text.trim().split(/\s+/).filter(Boolean);
@@ -197,10 +197,9 @@ const YEARLY = /\b(?:every\s+year|each\s+year|yearly|annually)\b/i;
  * Reads "remind me tomorrow to call the dentist" into a day and a thing to do.
  *
  * Deterministic and total: it always returns the words, and returns a date
- * only when one is unmistakably there. A reminder with no date never surfaces,
- * which would be the quietest way to lose something, so the caller stores an
- * undated result as an ordinary log and says so — never as a reminder nobody
- * will ever be reminded of (I2).
+ * only when one is unmistakably there. An undated result is a todo rather than
+ * a guess: the caller stores it as one and says so, because a day nobody named
+ * is worse than no day at all (I2 — the words reach disk either way).
  */
 export function parseReminder(input: string, now: Date): ParsedReminder {
   let text = input.trim().replace(/^remind(?:\s+me)?\b[\s,:;.-]*/i, '');

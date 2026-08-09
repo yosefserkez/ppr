@@ -384,8 +384,8 @@ export class Vault {
    * one is switched on. A model is asked only when the words hold a date no
    * rule here can see, gets one attempt, and is validated before it is
    * believed. If it fails, or is absent, the result simply has no date — and
-   * the caller keeps the words as a log rather than filing a reminder nobody
-   * will ever be reminded of (I2).
+   * the caller keeps the words as a todo, which is exactly what an intention
+   * with no day is (I2: the words reach disk either way).
    */
   async reminderFrom(text: string, opts: { signal?: AbortSignal } = {}): Promise<ParsedReminder> {
     const now = this.clock.now();

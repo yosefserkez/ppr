@@ -199,22 +199,22 @@ export async function remind(
   });
 
   if (!date) {
-    // A reminder with no day never surfaces anywhere, which is the quietest
-    // possible way to lose something. The words are kept as an ordinary log
-    // and the difference is said out loud (I2).
+    // This used to store a log, and at the time that was the honest answer: a
+    // reminder with no day surfaced nowhere, and filing something where
+    // nothing will ever show it again is the quietest way to lose it. `ppr
+    // todos` is that surface now, so the words stay an intention instead of
+    // being demoted to a note about one. The difference is still said out
+    // loud, which is the part that was never about where it was stored.
     errline(
-      color.yellow('No date in that — logged it instead.') +
+      color.yellow('No date in that — kept as a todo (ppr todos).') +
         color.dim(`\n  To set one:  ppr remind tomorrow ${truncate(text, 40)}`),
     );
-    const logged = await vault.add({ body: text, kind: vault.config.capture.defaultKind });
-    const saved = await finish(vault, logged, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
-    await handToReminders(vault, saved, decision);
-    return saved;
   }
 
+  // One write for both, because the difference between a reminder and a todo
+  // is one field and nothing else.
   const entry = await vault.addReminder(text, {
-    date,
-    ...(parsed.recurs ? { recurs: parsed.recurs } : {}),
+    ...(date ? { date, ...(parsed.recurs ? { recurs: parsed.recurs } : {}) } : {}),
   });
   const saved = await finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
   // Last, and unable to undo anything before it: the markdown is already on
@@ -248,8 +248,10 @@ Examples:
   ppr done <ref>                                 when it is dealt with
 
 --json gives the saved entry: the usual fields plus "date" and "recurs".
-A line with no readable date is kept as a log instead — kind says which — and
-the reason goes to stderr. A reminder with no day would never surface at all.
+A line with no readable date is kept as a todo — same kind, no "date" — and
+the reason goes to stderr. It waits in \`ppr todos\` rather than in a brief,
+because there is no day to count down to. \`ppr todo\` is the same thing said
+on purpose.
 
 --push hands a copy to whatever \`ppr-reminders-push\` is on your PATH — the
 one ppr ships creates it in Reminders.app, so the alarm arrives on your watch

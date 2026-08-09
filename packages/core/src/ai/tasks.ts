@@ -580,7 +580,7 @@ Return JSON: {"text": string, "date": "YYYY-MM-DD", "recurs": "yearly"}
  * read found no date at all.
  *
  * Returns nothing rather than throwing on anything it cannot use: the caller's
- * fallback is to keep the words as a log, which must happen whether the model
+ * fallback is to keep the words as a todo, which must happen whether the model
  * is missing, slow, or wrong (I2).
  */
 export interface ReminderDraft {

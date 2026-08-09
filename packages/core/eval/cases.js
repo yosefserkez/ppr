@@ -486,9 +486,10 @@ export const CASES = [
     dimension: 'reminders',
     remind: [
       {
-        // A guessed day is worse than none: the words are kept as a log
-        // either way, and only one of those outcomes wakes the user up on a
-        // day they never named.
+        // A guessed day is worse than none: the words are kept either way —
+        // as a todo, waiting in `ppr todos` — and only one of the two
+        // outcomes wakes the user up on a day they never named. Declining is
+        // the *right* answer here, which is why it is scored as one.
         say: 'ask Nadia about the icon set',
         now: '2026-08-08',
         expectDate: null,
@@ -502,7 +503,8 @@ export const CASES = [
       {
         // "remind me" without a future in it. The reminder path is reached by
         // the word, so the model is the only thing that can decline — and
-        // declining means no date, which files it as the note it always was.
+        // declining means no date, which files it as a todo instead of
+        // scheduling a question about the past.
         say: 'remind me why I dropped redis',
         now: '2026-08-08',
         expectDate: null,

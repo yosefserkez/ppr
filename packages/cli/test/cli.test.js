@@ -1197,18 +1197,25 @@ test('done takes a todo off the list without deleting anything', async () => {
   });
 });
 
-test('a reminder with no readable date is logged, and says so', async () => {
+test('a reminder with no readable date is kept as a todo, and says so', async () => {
   await withVault(async (dir) => {
     const { code, stderr } = await ppr(dir, ['remind me about the passport thing']);
     // Exit 0: nothing failed. The words are on disk either way (I2).
     assert.equal(code, 0);
-    assert.match(stderr, /No date in that — logged it instead/);
+    assert.match(stderr, /No date in that — kept as a todo/);
     assert.match(stderr, /ppr remind tomorrow/, 'and the way to do it explicitly');
 
+    // It used to become a log, which was right when a dateless intention had
+    // nowhere to appear. `ppr todos` is that surface now, so it stays what it
+    // was said as.
     const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
-    assert.equal(entry.kind, 'log', 'a reminder with no day would never surface at all');
+    assert.equal(entry.kind, 'reminder');
     assert.match(entry.title, /passport thing/);
+    // Still nothing to count down to, so still nothing in the brief.
     assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 0);
+    const [todo] = JSON.parse((await ppr(dir, ['todos', '--json'])).stdout);
+    assert.match(todo.text, /passport thing/);
+    assert.equal(todo.date, undefined);
 
     // A day the user typed out is a different matter: that is an error.
     const bad = await ppr(dir, ['remind', 'call the dentist', '--at', 'whenever']);
@@ -1229,9 +1236,10 @@ test('nothing leaves the vault for Reminders.app unless it was asked to', async 
       ['remind', 'tomorrow', 'call the dentist'],
       ['remind me to call the dentist tomorrow'],
       ['remind', 'tomorrow', 'call the dentist', '--no-push'],
-      // A dateless line became an ordinary log, so there is nothing to ring
-      // about however loudly the flag asked.
+      // A dateless line is a todo, so there is no moment to ring at however
+      // loudly the flag asked.
       ['remind', 'the passport thing', '--push'],
+      ['todo', 'buy milk'],
     ]) {
       const { code, stderr } = await ppr(dir, args);
       assert.equal(code, 0, `${args.join(' ')} should still save`);

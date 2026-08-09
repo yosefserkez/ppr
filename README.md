@@ -86,7 +86,9 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 | `ppr voice [file]` | Records, transcribes, distills.                                   |
 | `ppr append <ref>` | Keeps a thread going.                                             |
 | `ppr remind <when> <text>` | Something to be reminded of, on a day.                    |
-| `ppr done <ref>`   | That reminder is dealt with.                                      |
+| `ppr todo <text>`  | Something to do, with no day on it.                               |
+| `ppr todos`        | Everything open, overdue first.                                   |
+| `ppr done <ref>`   | That reminder or todo is dealt with.                              |
 
 
 `ppr dump` is the one to reach for when thoughts arrive faster than sentences. It
@@ -131,7 +133,7 @@ Follow-up questions belong to `ppr write`, where you opened a prompt and are
 already in a writing session. Add `--ask` to invite one onto a one-liner, or
 `--no-follow` to refuse it anywhere.
 
-### Reminders
+### Reminders and todos
 
 ```bash
 ppr remind tomorrow call the dentist
@@ -140,6 +142,9 @@ ppr remind every year on 20 october call mum
 ppr remind pay the rent --at "in 3 days"
 ppr remind tomorrow call the dentist --push    # a copy in Reminders.app too
 ppr "remind me to call the dentist tomorrow"   # the same thing, quoted
+ppr todo buy milk                              # no day on it
+ppr "todo: buy milk"                           # the same thing, quoted
+ppr todos                                      # everything open
 ppr done 6jc6ad                                # dealt with
 ```
 
@@ -149,14 +154,29 @@ timeline where you wrote it — `ppr ls` shows it like anything else, and
 only asked when no rule can find one, and never gets to overrule a date that is
 plainly there.
 
-**A line with no readable date is kept as a log, and says so.** A reminder
-without a day would never surface anywhere, which is the quietest possible way
-to lose something — so the words go in as an ordinary entry and stderr names the
-explicit form.
+**A line with no readable date is kept as a todo, and says so.** A todo is a
+reminder with the day left out — same kind, same file, same `ppr done` — so
+nothing is demoted to a note about an intention just because the words held no
+date. It waits in `ppr todos` instead of `ppr brief`, because there is nothing
+to count down to.
+
+```
+$ ppr todos
+! 6jc6ad  9 days overdue  file the expenses
+  qzvmqr  in 3 days       water the plants
+  78q6m2                  buy milk
+```
+
+Overdue first, most overdue at the top; then dated, soonest first; then the
+undated ones, oldest first. `--all` shows what you have finished too. It runs no
+model and reads nothing but frontmatter, so it is instant and the same list
+twice.
 
 `ppr done` writes `status: done` and changes nothing else; the file stays.
-An unfinished reminder shows up as overdue for a week after its day, then stops
-asking — a brief that never forgets is a guilt list rather than a heads-up.
+An unfinished *dated* reminder shows up in `ppr brief` as overdue for a week
+after its day, then stops asking — a brief that never forgets is a guilt list
+rather than a heads-up. `ppr todos` is the other half of that: a list you can
+finish, so nothing ages off it.
 
 ### Letting something else do the ringing
 

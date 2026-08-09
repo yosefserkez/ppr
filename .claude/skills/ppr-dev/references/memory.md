@@ -71,8 +71,8 @@ slow, or broken costs a stderr line, never the entry (I2's shape), which is why
 `pushDecision()` in `cli/src/porcelain.ts` is the only thing that decides, so
 `ppr remind` and `ppr "remind me …"` cannot disagree — both reach it through
 the one `remind()` in `commands/capture.ts` (L18). Order is flag, then day,
-then whether the tool exists: a dateless line became an ordinary log and has
-nothing to ring about, so `--push` cannot conjure a reminder out of it.
+then whether the tool exists: a dateless line is a todo and has no moment to
+ring at, so `--push` cannot conjure a reminder out of it.
 
 What goes down the pipe is the `entry.created` event, in exactly the shape a
 hook on `entry.created` receives — one serializer, two doors. That is also why

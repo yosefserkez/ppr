@@ -119,8 +119,8 @@ export type PushDecision =
  *
  * The order is what the reasons mean. `--no-push` is an instruction and wins
  * outright. A line with no readable day is never pushed however loudly it was
- * asked for, because the entry became an ordinary log and there is nothing to
- * ring about. Only then does it matter whether the tool exists — which is what
+ * asked for: the entry is a todo, and there is no moment for anything over
+ * there to ring at. Only then does it matter whether the tool exists — which is what
  * keeps `--push` with no plugin installed an explanation rather than a
  * silence. That last check used to be `platform === 'darwin'`; it is now "is
  * there a program on PATH that does this", which is the same question asked
