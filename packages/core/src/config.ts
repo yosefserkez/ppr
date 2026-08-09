@@ -62,6 +62,18 @@ export interface Config {
      */
     compose: 'editor' | 'inline';
   };
+  remind: {
+    /**
+     * Hand a dated reminder to the OS as it is captured — Reminders.app on
+     * macOS, nothing anywhere else.
+     *
+     * Off, because writing into another app is not something a note tool may
+     * do to you by default. On, the copy is one-way and never read back: the
+     * markdown stays the source of truth (I1), and completing the reminder
+     * over there does not reach in here.
+     */
+    push: boolean;
+  };
   display: {
     color: boolean;
     /** Entries shown by `ppr ls` with no --limit. */
@@ -92,6 +104,7 @@ export const DEFAULT_CONFIG: Config = {
     autoLink: false,
     compose: 'editor',
   },
+  remind: { push: false },
   display: { color: true, listLimit: 20, interactive: true },
 };
 

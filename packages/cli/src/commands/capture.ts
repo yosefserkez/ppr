@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type Entry, type Vault, parseReminder, truncate, PprError } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
+import { handToReminders, pushDecision } from '../bridge.js';
 import { dayFlag, globals, withVault } from '../context.js';
 import { confirm, editorName, hasStdin, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -174,7 +175,7 @@ export async function remind(
   vault: Vault,
   cmd: Command,
   body: string,
-  flags: { at?: string; print?: boolean } = {},
+  flags: { at?: string; print?: boolean; push?: boolean } = {},
 ): Promise<Entry> {
   const now = vault.now();
   // `--at` was typed on purpose, so it wins and a bad value is an error rather
@@ -183,6 +184,15 @@ export async function remind(
   const parsed = stated ? parseReminder(body, now) : await vault.reminderFrom(body);
   const text = parsed.text || body;
   const date = stated ?? parsed.date;
+
+  // Decided once, here, for the same reason the whole function exists: this is
+  // also the path `ppr "remind me …"` takes, and a second copy of the rule is
+  // a second answer waiting to happen (L18).
+  const decision = pushDecision({
+    configured: vault.config.remind.push,
+    ...(flags.push !== undefined ? { asked: flags.push } : {}),
+    dated: Boolean(date),
+  });
 
   if (!date) {
     // A reminder with no day never surfaces anywhere, which is the quietest
@@ -193,14 +203,21 @@ export async function remind(
         color.dim(`\n  To set one:  ppr remind tomorrow ${truncate(text, 40)}`),
     );
     const logged = await vault.add({ body: text, kind: vault.config.capture.defaultKind });
-    return finish(vault, logged, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+    const saved = await finish(vault, logged, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+    await handToReminders(saved, undefined, decision);
+    return saved;
   }
 
   const entry = await vault.addReminder(text, {
     date,
     ...(parsed.recurs ? { recurs: parsed.recurs } : {}),
   });
-  return finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+  const saved = await finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+  // Last, and unable to undo anything before it: the markdown is already on
+  // disk, so a bridge that fails costs a copy in another app and never the
+  // entry (I2's shape).
+  await handToReminders(saved, date, decision);
+  return saved;
 }
 
 /** `ppr remind` — the command form of the same thing. */
@@ -210,6 +227,10 @@ export function remindCommand(): Command {
     .argument('[text...]', 'the day and the thing, e.g. `tomorrow call the dentist`')
     .option('--at <when>', 'the day, when it is not in the text (friday, in 3 days, 20 october)')
     .option('-p, --print', 'print the saved entry')
+    // `--push` is declared first on purpose: commander gives a lone `--no-x`
+    // a default of true, and this has to default to whatever config says.
+    .option('--push', 'also create it in Reminders.app (macOS)')
+    .option('--no-push', 'keep it in the vault only')
     .addHelpText(
       'after',
       `
@@ -224,9 +245,14 @@ Examples:
 
 --json gives the saved entry: the usual fields plus "date" and "recurs".
 A line with no readable date is kept as a log instead — kind says which — and
-the reason goes to stderr. A reminder with no day would never surface at all.`,
+the reason goes to stderr. A reminder with no day would never surface at all.
+
+--push hands a copy to Reminders.app, so the alarm arrives on your watch
+rather than only in a terminal. It is one-way and never read back; the entry is
+written first and stands whatever the bridge does. \`ppr config set
+remind.push true\` makes it the default for every reminder, quoted ones too.`,
     )
-    .action(async (text: string[], flags: { at?: string; print?: boolean }, self: Command) =>
+    .action(async (text: string[], flags: { at?: string; print?: boolean; push?: boolean }, self: Command) =>
       withVault(self, async (vault) => {
         // Not `resolveText` alone: with nothing to work from it opens $EDITOR,
         // and a bare `ppr remind` is a person asking how the command works.

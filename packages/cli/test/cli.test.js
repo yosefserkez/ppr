@@ -786,6 +786,29 @@ test('a reminder with no readable date is logged, and says so', async () => {
   });
 });
 
+test('nothing leaves the vault for Reminders.app unless it was asked to', async () => {
+  await withVault(async (dir) => {
+    // Off is the default: writing into another app is not something ppr does
+    // to you. Only the paths that reach no osascript are exercised here — the
+    // decision itself is unit-tested in bridge.test.js, and a test suite that
+    // creates real reminders is a test suite that leaves litter behind.
+    assert.equal((await ppr(dir, ['config', 'get', 'remind.push'])).stdout.trim(), 'false');
+
+    for (const args of [
+      ['remind', 'tomorrow', 'call the dentist'],
+      ['remind me to call the dentist tomorrow'],
+      ['remind', 'tomorrow', 'call the dentist', '--no-push'],
+      // A dateless line became an ordinary log, so there is nothing to ring
+      // about however loudly the flag asked.
+      ['remind', 'the passport thing', '--push'],
+    ]) {
+      const { code, stderr } = await ppr(dir, args);
+      assert.equal(code, 0, `${args.join(' ')} should still save`);
+      assert.doesNotMatch(stderr, /Reminders/, `${args.join(' ')} should not touch Reminders.app`);
+    }
+  });
+});
+
 test('done stops a reminder coming up, and leaves the file where it was', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
