@@ -449,6 +449,12 @@ pnpm eval --save                         # append the score to eval/runs.jsonl
 pnpm eval --json > runs/$(date +%F).json # a number to compare next month
 ```
 
+`--model` replaces `ai.model` and nothing else, so the id has to be spelled the
+way the *configured endpoint* spells it: through an OpenRouter `baseUrl` both
+`openai/gpt-4o-mini` and `gpt-4o-mini` resolve, against `api.openai.com` only
+the second does. A vendor prefix is part of a model's name there, never a way
+to switch provider — that is `ai.provider`, and `--model` does not touch it.
+
 Dimensions: decomposition, precision, recall, provenance, dates,
 reconciliation, retrieval, reminders, brief. A case asserts on *meaning* — a
 set of words that must appear in some fact — and every case also says what
