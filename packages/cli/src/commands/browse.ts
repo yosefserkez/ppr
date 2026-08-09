@@ -12,7 +12,7 @@ import {
   type Vault,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
-import { ago, color, entryDetail, entryJson, entryList, json, out, searchList, table, shortId } from '../render.js';
+import { ago, color, entryDetail, entryJson, entryList, errline, json, out, searchList, table, shortId } from '../render.js';
 import { spawnEditorOn } from '../input.js';
 import { browse, canBrowse } from '../ui/browser.js';
 import { Screen } from '../ui/screen.js';
@@ -103,14 +103,31 @@ export function searchCommand(): Command {
 
       if (g.json) return json(hits.map((h) => ({ ...entryJson(h.entry), score: h.score, excerpt: h.excerpt })));
       if (g.quiet) return out(hits.map((h) => h.entry.id).join('\n'));
+
+      // Facts are state, not a timeline, so they are out of every search that
+      // did not ask for them (I12). That is right, and it is also silent: the
+      // answer can be sitting in `memory/` while the search says nothing at
+      // all. One line on stderr (I10) names the search that would find it.
+      const inFacts = flags.kind?.length
+        ? []
+        : vault.search(text, { ...rest, kind: MEMORY_KIND, limit: 20 });
+
       if (canBrowse({ ...g, ...flags }, vault.config.display.interactive) && hits.length) {
-        return browse(vault, `search: ${text}`, hits.map((h) => h.entry));
+        await browse(vault, `search: ${text}`, hits.map((h) => h.entry));
+      } else {
+        out(searchList(hits, now));
       }
-      out(searchList(hits, now));
+      if (inFacts.length) {
+        const count = `${inFacts.length} fact${inFacts.length === 1 ? '' : 's'}`;
+        errline(color.dim(`${count} match too — ppr search ${shellArg(text)} -k memory`));
+      }
     }),
   );
   return cmd;
 }
+
+/** Quotes a query only when a shell would otherwise split it. */
+const shellArg = (text: string): string => (/[\s"'\\$`]/.test(text) ? JSON.stringify(text) : text);
 
 /** `ppr show` — read one entry, with its neighbourhood. */
 export function showCommand(): Command {

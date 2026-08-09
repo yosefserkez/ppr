@@ -754,6 +754,26 @@ test('context hands another tool everything ppr knows, without a model', async (
   });
 });
 
+test('a search that would have matched a fact says so, on stderr', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'lunch was fine']);
+    await ppr(dir, ['memory', 'add', 'Emily likes dark chocolate']);
+
+    const { code, stdout, stderr } = await ppr(dir, ['search', 'emily']);
+    assert.equal(code, 0);
+    assert.match(stderr, /1 fact match too/);
+    assert.match(stderr, /ppr search emily -k memory/, 'and the search that finds it');
+    assert.doesNotMatch(stdout, /fact match too/, 'stdout stays pipeable');
+    assert.doesNotMatch(stdout, /dark chocolate/, 'the fact itself is still out of the timeline');
+
+    // Nothing to point at once the kind was asked for, or when piping data.
+    assert.doesNotMatch((await ppr(dir, ['search', 'emily', '-k', 'memory'])).stderr, /match too/);
+    const json = await ppr(dir, ['search', 'emily', '--json']);
+    assert.deepEqual(JSON.parse(json.stdout), []);
+    assert.doesNotMatch(json.stderr, /match too/);
+  });
+});
+
 test('learning needs a model, and says so instead of failing silently', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['+', 'something worth remembering']);
