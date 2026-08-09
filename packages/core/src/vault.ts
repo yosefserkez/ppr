@@ -39,6 +39,13 @@ import {
   tidyReminder,
   type ParsedReminder,
 } from './remind.js';
+import {
+  threadFacts,
+  threadGaps,
+  threadSeeds,
+  walkThread,
+  type Thread,
+} from './thread.js';
 import { vaultEvent, type EventInput, type VaultEvent } from './events.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
@@ -559,6 +566,48 @@ export class Vault {
   graph() {
     return graph(this.catalog.entries());
   }
+
+  /**
+   * The entries carrying one line of thought, oldest first.
+   *
+   * The question this answers is "where was I": a business idea worked through
+   * over a fortnight, or a concept that has come back every eighteen months
+   * since 2023. Both are already in the vault as a shape — links, tags, the
+   * words in the titles — and this is the walk that reads that shape back out
+   * (see `thread.ts` for why it is bounded the way it is).
+   *
+   * Facts are kept out of the walk and gathered separately: a fact is state
+   * and has no position in a timeline (I12), but "this is what you concluded"
+   * is half of what you came back for.
+   *
+   * Pure, offline, and the same answer twice — no model is asked whether two
+   * notes are the same thought, because linking or tagging them is how the
+   * user already said so.
+   */
+  thread(query: string, opts: { seeds?: number } = {}): Thread {
+    const input = query.trim();
+    if (!input) {
+      throw new PprError(
+        'EINVALID',
+        'Nothing to follow',
+        'Try: ppr thread coffee subscription, or ppr thread <id>',
+      );
+    }
+    const pool = filterEntries(this.catalog.entries());
+    const { seeds, seededBy } = threadSeeds(pool, input, {
+      now: this.clock.now(),
+      ...(opts.seeds ? { limit: opts.seeds } : {}),
+    });
+    const entries = walkThread(pool, seeds);
+    return {
+      query: input,
+      seededBy,
+      entries,
+      facts: threadFacts(this.catalog.entries(), entries),
+      gaps: threadGaps(entries.map((m) => m.entry)),
+    };
+  }
+
 
   stats(): VaultStats {
     const entries = this.catalog.entries();

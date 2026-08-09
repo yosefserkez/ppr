@@ -17,6 +17,7 @@ export * from './links.js';
 export * from './memory.js';
 export * from './remind.js';
 export * from './navigate.js';
+export * from './thread.js';
 export * from './models.js';
 export * from './capture.js';
 export { Catalog } from './catalog.js';
