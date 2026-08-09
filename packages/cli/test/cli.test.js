@@ -564,6 +564,31 @@ test('a bare ppr reports instead of capturing', async () => {
   });
 });
 
+test('a bare ppr says what ppr knows, and only when it knows something', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'shipped the importer']);
+
+    const bare = await ppr(dir, []);
+    assert.doesNotMatch(bare.stdout, /fact/, 'an empty fact store is not advertised');
+    assert.doesNotMatch(bare.stdout, /ppr brief/, 'nor is the command for reading it');
+
+    await ppr(dir, ['memory', 'add', "Priya's birthday is in a few days"]);
+    const [fact] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout);
+    const path = join(dir, fact.path);
+    const soon = new Date(Date.now() + 5 * 86_400_000);
+    const day = `${String(soon.getMonth() + 1).padStart(2, '0')}-${String(soon.getDate()).padStart(2, '0')}`;
+    const raw = await readFile(path, 'utf8');
+    await writeFile(path, raw.replace(/^---\n/, `---\ndate: 0000-${day}\nrecurs: yearly\n`));
+
+    const { code, stdout } = await ppr(dir, []);
+    assert.equal(code, 0);
+    assert.match(stdout, /1 fact/, 'the header counts what is known');
+    assert.match(stdout, /1 entry\b/, 'and a fact is not counted as an entry');
+    assert.match(stdout, /Priya's birthday.*in \d+ days/, 'the soonest thing is named');
+    assert.match(stdout, /ppr brief/, 'and the command that lists the rest');
+  });
+});
+
 test('piping still captures, because a pipe is deliberate', async () => {
   await withVault(async (dir) => {
     const { code } = await ppr(dir, [], { input: 'straight from a pipe\n' });
