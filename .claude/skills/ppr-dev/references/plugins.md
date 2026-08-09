@@ -158,7 +158,7 @@ the worked example, pure and tested.
 
 ## The plugins
 
-`plugins/` is neither package. Two programs ppr ships, `install.sh` puts on
+`plugins/` is neither package. Three programs ppr ships, `install.sh` puts on
 PATH, and finds by name. Nothing in `packages/` imports them; nothing in them
 imports ppr. Plain CommonJS, no dependencies, no build.
 
@@ -167,7 +167,8 @@ applescript.js        pure builders: escaping, date assembly, hints
 osascript.js          the three lines that shell out, plus stdin reading
 ppr-notify            the read composer
 ppr-reminders-push    the write consumer
-test/                 builders and the event filter; run by `pnpm test`
+ppr-contact           the pull consumer
+test/                 builders, extraction, event filters; run by `pnpm test`
 ```
 
 This is the **single copy** of the AppleScript. Core keeps none: two copies of
@@ -183,6 +184,32 @@ cannot span lines and takes exactly five escapes, and an AppleScript *date
 literal* is parsed in the user's locale — so a date is assembled from
 components, with `set day of d to 1` first so assigning a month never rolls the
 date into the next one.
+
+## A pull plugin, in any language
+
+> **Call `ppr … --json`, transform, act.**
+
+That is the whole pattern, and `plugins/ppr-contact` is the worked example: it
+reads a person's facts out of `ppr context "<name>" --json`, picks out a phone
+number, an email, and a birthday with plain patterns, and writes a card. Four
+inputs and no more — its argv, an event on stdin, `PPR_VAULT`, and `ppr`
+itself.
+
+Three things it had to get right, and a new one will too:
+
+- **The query does not filter for you.** `ppr context` returns the *whole* fact
+  store while it is small — that is what one-line facts are for — so the
+  neighbour's phone number arrives in the answer. Filter on your side.
+- **A failure is not an empty answer** (L21's shape, out here). `spawnSync`
+  failing means "could not ask"; an empty array means "asked, nothing there".
+  Only one of them deserves a line on stderr.
+- **Extraction is deterministic or it is a liability.** A model already decided
+  the sentence was worth keeping. A second one deciding what a phone number
+  looks like would rewrite somebody's card differently on every run.
+
+A subcommand and a hook can be the same file. When they are, the event says
+*who* and the pull says *what* — a record built from one event carries whichever
+field that event mentioned and overwrites everything else you knew.
 
 ## Writing a consumer
 

@@ -52,6 +52,41 @@ Adding a reminder field is the same four edits as a fact's, against
 `reminderExtra()` / `REMINDER_KEYS` / `toDated()` / the `--json` shape in
 `commands/think.ts`.
 
+## Todos are reminders with the date left off
+
+```yaml
+kind: reminder            # the same kind, the same file, the same `ppr done`
+                          # and no `date:` at all
+```
+
+`addReminder` takes an optional date; there is no second writer, because "buy
+milk" and "buy milk on Friday" are one act with a field filled in. What the
+missing field costs is the calendar — `toDated()` returns null, so a todo
+cannot reach `ppr brief` and should not: a countdown that included dateless
+things would stop being one.
+
+`Vault.todos()` is the other view of the same entries: `kind: reminder` only
+(deliberately narrower than `upcoming()`, which is dated *anything* and would
+make a todo list out of birthdays), ordered most-overdue, then soonest, then
+oldest-undated, ties on id because ids are monotonic (L2). It reuses
+`nextOccurrence` with an effectively infinite grace window rather than doing
+its own arithmetic — a brief forgets after a week because it is a heads-up, a
+list you can finish keeps everything until you finish it, and two countdowns
+would disagree inside a release.
+
+`ppr brief` and the bare `ppr` overview each end with a count of the undated
+ones, never the items themselves: the brief's `--json` array is dated things,
+and a script filtering it on `.overdue` should not have to step over a
+sentence.
+
+**The fallback story is the lesson.** A dateless `ppr remind …` used to become
+a log, honestly, because nothing could display an undated intention. `ppr
+todos` removed the reason and the fallback changed with it. When you add a
+surface, go and look at what was degraded because it did not exist.
+
+No new event: a todo is `entry.created` with `kind: reminder` and no `date` —
+an absent field, not a name (I13).
+
 ## Handing a reminder to something else
 
 `remind.push` (and `--push` / `--no-push`) hands a dated reminder to

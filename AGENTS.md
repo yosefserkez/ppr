@@ -308,6 +308,11 @@ racing the next write. `entry.*` and the semantic events are both emitted: a
 learned fact is `entry.created` (a file appeared) *and* `fact.learned` (a model
 decided it was durable), and those are different subscriptions.
 
+A todo needs nothing here either, and it is the sharper version of the same
+rule: it is `entry.created` with `kind: reminder` and no `date` in `extra` —
+an *absent field*, not a new name. Consumers filter, the way
+`ppr-reminders-push` already does when it declines an undated reminder.
+
 **Hooks come from the user layer only — this is a security rule, not a
 preference.** `hooks` is read from `~/.config/ppr/config.json` and never from
 `<vault>/.ppr/config.json`. Config merges three layers and the vault layer
@@ -328,15 +333,23 @@ and lets the child finish on its own. Hooks and the plugin-backed flags both go
 through it, so there is exactly one answer to "what happens when it is missing,
 slow, or broken".
 
-**The plugins are not part of ppr.** `plugins/ppr-notify` and
-`plugins/ppr-reminders-push` are ordinary programs that ppr ships and
-`install.sh` puts on PATH; nothing in `packages/` imports them and nothing in
-them imports ppr. They are the single copy of the AppleScript — core keeps
-none, because two copies of escaping and date assembly drift, and this is the
-code where drift files somebody's reminder in the wrong month. The split
-inside them is `schedule.ts`'s: pure builders in `applescript.js`, three lines
-that shell out in `osascript.js`. **No test may run osascript** — a suite that
-posts banners or creates reminders leaves litter in a real person's list.
+**The plugins are not part of ppr.** `plugins/ppr-notify`,
+`plugins/ppr-reminders-push`, and `plugins/ppr-contact` are ordinary programs
+that ppr ships and `install.sh` puts on PATH; nothing in `packages/` imports
+them and nothing in them imports ppr. They are the single copy of the
+AppleScript — core keeps none, because two copies of escaping and date
+assembly drift, and this is the code where drift files somebody's reminder in
+the wrong month. The split inside them is `schedule.ts`'s: pure builders in
+`applescript.js`, three lines that shell out in `osascript.js`. **No test may
+run osascript** — a suite that posts banners or creates reminders leaves
+litter in a real person's list.
+
+Two of the three are pushed to; `ppr-contact` is the worked example of the
+other half, and the pattern generalises to any language: **a pull plugin is
+call `ppr … --json`, transform, act.** It is both a subcommand and a hook in
+one file, and the reason is worth knowing — as a hook the event says *who*
+and the pull says *what*, because a card assembled from one event carries
+whichever field that fact happened to mention and overwrites the rest.
 
 Two traps are paid for and commented in place there: AppleScript string
 literals cannot span lines and take exactly five escapes, and an AppleScript
@@ -371,6 +384,7 @@ source of truth (I1), so the markdown is the address.
 | Anything about facts: shape, paths, provenance, state | `core/src/memory.ts` |
 | Anything dated: the shared shape, occurrences, overdue | `core/src/memory.ts` |
 | Reminders: their frontmatter, and reading a date out of words | `core/src/remind.ts` |
+| Which intentions are open, and what order a list of them comes in | `Vault.todos()` |
 | Something needing `fs` or a subprocess | `packages/core/src/node/` |
 | What ppr announces when it writes something | `core/src/events.ts` |
 | Running somebody else's program, at all | `cli/src/child.ts` — nowhere else |
@@ -429,6 +443,22 @@ opposite of a fact in the way that decides where it lives — you *did* say
 "remind me to call the dentist" at the moment you said it, so a reminder is in
 `entries/`, in the timeline, and in `ppr ls`. I12 is about state; an intention
 is not state, it is an event that has a date attached to it.
+
+**Todo.** The same thing with the day left out — `kind: reminder`, no `date`.
+Not a second kind and not a second writer: `addReminder` takes an optional
+date, because "buy milk" and "buy milk on Friday" are one act with a field
+filled in. What the missing field costs is the calendar: `toDated` returns
+nothing, so a todo never reaches `ppr brief` and never will, because a brief
+that showed dateless things would stop being a countdown. `ppr todos` is the
+list instead, ordered most-overdue, then soonest, then oldest-undated, and
+`ppr brief` ends with a count of the ones it cannot show.
+
+This is also why the dateless capture fallback changed. `ppr remind me about
+the passport thing` used to become a log, and that was right while nothing
+could display an undated intention — storing one would have been the quietest
+way to lose it. Once `ppr todos` existed the reason was gone, and the words
+stay what they were said as. **A surface arriving is a licence to revisit the
+fallbacks that existed because it did not.**
 
 **Dated anything.** `Vault.upcoming()` is about things with a `date`, not about
 facts: a dated fact, a reminder, and a note somebody typed `date: 2027-03-01`
@@ -583,7 +613,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 297 tests, plugins included. No network. No TTY required.
+pnpm test        # 315 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -623,6 +653,12 @@ pnpm build
   hostile string and a date, plus which events `ppr-reminders-push` is about and
   the `file://` note it writes (a vault path with a space in it is the hostile
   case). Builders only; nothing here runs osascript.
+- `plugins/test/contact.test.js` — what `ppr-contact` reads out of a fixture
+  `ppr context --json` answer and what it would write. The fixture is hostile
+  on purpose: it holds somebody else's phone number (the query returns the
+  whole store while it is small), a birthday with year `0000`, an apostrophe
+  in a surname, and a name that tries to end the string literal. Nothing here
+  runs osascript and nothing spawns ppr.
 - `cli/test/followups.test.js` — when a capture is allowed to ask a question.
 - `cli/test/suggest.test.js` — did-you-mean, and what it refuses to guess.
 - `cli/test/cli.test.js` — the real binary, spawned against a temp vault.

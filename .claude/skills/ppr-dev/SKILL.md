@@ -34,7 +34,9 @@ rebuildable from it (I12). Facts are ordinary markdown entries with
 A `kind: reminder` is an intention and lives in the *first* tree: you did say it
 when you said it. What it shares with a fact is only `date:`/`recurs:` in
 `extra`, which is what `ppr brief` counts down — dated anything, including a
-file somebody typed `date:` into by hand.
+file somebody typed `date:` into by hand. Leave the date off and the same entry
+is a **todo**: not a second kind, just the field absent, which is why it is in
+`ppr todos` and never in `ppr brief`.
 
 ## The six questions to ask before writing code
 
@@ -48,8 +50,10 @@ file somebody typed `date:` into by hand.
 5. **Is it something that happened, something that is true, or something to
    do?** The first is an entry, the second is a fact — and a fact must stay out
    of `latest`, `ls`, `recap`, and search unless `-k memory` asks for it (I12).
-   The third is a reminder, which is an entry with a date on it and *stays* in
-   the timeline; it completes rather than becoming untrue.
+   The third is a reminder, which is an entry that *stays* in the timeline and
+   completes rather than becoming untrue. With a date it is counted down to in
+   `ppr brief`; without one it is a todo and lives in `ppr todos`. Same kind,
+   one optional field — resist making it two of anything.
 6. **Am I solving a problem someone actually has?** The dependency list is three
    packages. Keep it that way.
 7. **Is something else already doing this?** Then hand it over rather than
