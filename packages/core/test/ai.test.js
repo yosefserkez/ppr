@@ -374,6 +374,33 @@ test('learn only reads what it has not read before', async () => {
   assert.equal((await vault.learn({ all: true })).scanned, 2, '--all ignores the mark');
 });
 
+test('a run over part of the journal does not declare the rest read', async () => {
+  // `ppr memory learn <ref>` and `--since` read a window that can start after
+  // the mark. Moving the mark to that window's newest entry writes off
+  // everything in between, and nothing ever offers those entries to a model
+  // again — the incremental learner's one way to lose your words (L20, L21).
+  const vault = await makeVault({ provider: learnProvider({ facts: [] }) });
+  const skipped = await vault.add({ body: 'Rae took over billing', kind: 'log' });
+  const newest = await vault.add({ body: 'Sam owns auth now', kind: 'log' });
+
+  await vault.learn({ entries: [vault.get(newest.id)] });
+  assert.equal((await vault.learn()).scanned, 2, 'the entry beside it is still unread');
+
+  const later = await vault.add({ body: 'Ana runs deploys', kind: 'log' });
+  await vault.learn({ since: new Date(later.created) });
+  assert.equal((await vault.learn()).scanned, 1, '--since does not move the mark either');
+  assert.equal((await vault.learn()).scanned, 0, 'the incremental run still does');
+  assert.ok(skipped.id < newest.id);
+});
+
+test('piped text the model garbles is reported, not counted as empty', async () => {
+  const vault = await makeVault({ provider: fakeProvider('not json at all') });
+  const result = await vault.learn({ text: 'Emily likes chocolate', entries: [] });
+
+  assert.equal(result.learned.length, 0);
+  assert.equal(result.unreadable, 1, 'a mangled reply is not "nothing durable in there"');
+});
+
 test('a refinement rewrites the fact and keeps both sources', async () => {
   const vault = await makeVault({ provider: learnProvider({ facts: ['Emily likes chocolate'] }) });
   const first = await vault.add({ body: 'emily likes chocolate', kind: 'log' });

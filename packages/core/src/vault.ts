@@ -586,17 +586,39 @@ export class Vault {
         ...this.linkOption(),
         ...signal,
       });
+      // Piped text has no entry to stay queued in, so saying the model failed
+      // is the whole of what this run can do about it — and it is still not
+      // the same answer as "there was nothing durable in there" (L21).
+      if (!batch.ok) result.unreadable++;
       candidates.push(...batch.facts);
     }
-    if (!candidates.length) {
-      await this.markLearned(read);
-      return result;
-    }
 
-    // Reconcile against what is already known, so a second run over the same
-    // week does not double the store. Only the facts a candidate could
-    // plausibly be about are sent: a few hundred one-liners is a small prompt,
-    // but a vault that has been running for a year is not.
+    if (candidates.length) await this.absorb(candidates, result, opts.signal);
+
+    // Only a run that read the backlog may move the mark. `--since` and an
+    // explicit list of entries read a window that can begin *after* it, and
+    // treating their newest entry as "everything before this is done" writes
+    // off the gap for good — the one way an incremental learner loses words
+    // no model ever saw (L20, L21). A mark left behind costs a re-scan, which
+    // reconciliation absorbs.
+    if (!opts.entries && !opts.since) await this.markLearned(read);
+    return result;
+  }
+
+  /**
+   * Folds candidate facts into the store, one verdict at a time.
+   *
+   * Reconciliation happens against what was already known, so a second run
+   * over the same week does not double the store. Only the facts a candidate
+   * could plausibly be about are sent: a few hundred one-liners is a small
+   * prompt, but a vault that has been running for a year is not.
+   */
+  private async absorb(
+    candidates: tasks.FactCandidate[],
+    result: LearnResult,
+    abort?: AbortSignal,
+  ): Promise<void> {
+    const signal = abort ? { signal: abort } : {};
     const known = this.relevantFacts(candidates.map((c) => c.text));
     const verdicts = await tasks.reconcileFacts(
       candidates.map((c) => c.text),
@@ -630,8 +652,6 @@ export class Vault {
           await this.update(target.id, {
             body: verdict.text,
             title: truncate(verdict.text, 70),
-            // `extra` merges, so a date the refinement did not mention is kept
-            // rather than dropped — a better wording must not lose structure.
             // Spread the existing fact first: a better wording must not drop
             // a date or a provenance trail it simply did not mention.
             ...this.factPatch({
@@ -651,9 +671,6 @@ export class Vault {
       );
       result.conflicts.push({ fact: added, with: marked });
     }
-
-    await this.markLearned(read);
-    return result;
   }
 
   /** Pulls durable facts out of loose text — the piped path into `learn`. */

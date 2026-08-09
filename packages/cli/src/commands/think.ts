@@ -417,18 +417,24 @@ function factLine(fact: Fact): string {
 
 /** Says what happened even when nothing did — silence reads as a failure. */
 function summarise(result: LearnResult): string {
-  if (!result.scanned && !result.learned.length) return 'Nothing new to read.';
-  const parts = [`read ${result.scanned} ${result.scanned === 1 ? 'entry' : 'entries'}`];
+  const parts: string[] = [];
+  if (result.scanned) parts.push(`read ${result.scanned} ${result.scanned === 1 ? 'entry' : 'entries'}`);
   if (result.learned.length) parts.push(`${result.learned.length} new`);
   if (result.refined.length) parts.push(`${result.refined.length} refined`);
   if (result.conflicts.length) parts.push(`${result.conflicts.length} to settle`);
   if (result.duplicates) parts.push(`${result.duplicates} already known`);
-  if (parts.length === 1) parts.push('nothing durable in them');
-  const summary = parts.join(' · ');
-  if (!result.unreadable) return summary;
-  // Not an error: those entries are still queued, and saying so is the
-  // difference between "there was nothing there" and "ask me again".
-  return `${summary}\n${result.unreadable} the model could not read — they stay queued for the next run.`;
+
+  if (!result.unreadable) {
+    if (!parts.length) return 'Nothing new to read.';
+    if (parts.length === 1) parts.push('nothing durable in them');
+    return parts.join(' · ');
+  }
+  // Not an error, and not silence either: an entry the model garbled is still
+  // queued, and piped text the model garbled is simply gone. Either way the
+  // difference between "there was nothing there" and "ask me again" is the
+  // whole point of tracking it (L21).
+  const stuck = `${result.unreadable} the model could not read`;
+  return parts.length ? `${parts.join(' · ')}\n${stuck} — still queued for the next run.` : `${stuck}.`;
 }
 
 function parseSince(when: string, now: Date): Date {
