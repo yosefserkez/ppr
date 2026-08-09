@@ -180,7 +180,13 @@ const backendCheck: Check = {
     if (provider === 'none') {
       return warn('not configured — offline heuristics only', 'ppr config set ai.provider ollama');
     }
-    return ok(`${provider}${model ? `/${model}` : ''}`);
+    // Configured is not the same as working: a model id with a typo, or one
+    // that cannot return JSON, looks exactly like this and then fails quietly
+    // in every AI command (L21). Only a round trip can tell, so point at it.
+    return {
+      ...ok(`${provider}${model ? `/${model}` : ''} — configured; \`ppr ai test\` checks it answers`),
+      fix: 'ppr ai test',
+    };
   },
   async repair(ctx) {
     const choices = [
@@ -216,6 +222,7 @@ const backendCheck: Check = {
       }
     }
     await ctx.reload();
+    if (picked.value !== 'none') out(color.dim('  Check it answers: ppr ai test'));
     return true;
   },
 };

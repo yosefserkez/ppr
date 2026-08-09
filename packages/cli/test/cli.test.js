@@ -163,6 +163,19 @@ test('commands that need AI fail with a hint, not a stack trace', async () => {
   });
 });
 
+test('`ai test` says there is no backend rather than pretending to test one', async () => {
+  await withVault(async (dir) => {
+    // The live round trip cannot run here — no test may reach the network — so
+    // what is pinned is the path a user with nothing configured actually hits.
+    const { code, stdout, stderr } = await ppr(dir, ['ai', 'test']);
+    assert.equal(code, 4);
+    assert.match(stderr, /No model backend configured/);
+    assert.match(stderr, /ppr ai setup/);
+    assert.doesNotMatch(stderr, /at Object|node:internal/);
+    assert.equal(stdout, '', 'nothing to report is nothing on stdout');
+  });
+});
+
 test('everything still works without a model', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['deployed 4.2 to prod #release']);

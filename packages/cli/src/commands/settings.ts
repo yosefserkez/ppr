@@ -8,6 +8,7 @@ import {
   keyEnvFor,
   looksLikeSecret,
   mergeConfig,
+  parseJsonLoose,
   redactSecret,
   setPath,
   validateConfig,
@@ -160,6 +161,31 @@ const TRANSCRIBE_HELP: Record<string, string> = {
 /** Local-first ordering: the options that need no account come first. */
 const asChoices = (help: Record<string, string>) =>
   Object.entries(help).map(([value, hint]) => ({ value, label: value, hint }));
+
+const TEST_HINT =
+  'Usual causes: a model id this endpoint does not have, an endpoint that is down, or a model that cannot return JSON. `ppr ai status` shows what is configured.';
+
+/** One line of a reply, short enough to read and long enough to recognise. */
+const snippet = (raw: string): string => {
+  const line = raw.replace(/\s+/g, ' ').trim();
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+};
+
+/**
+ * Why the model never answered.
+ *
+ * A missing key or an unconfigured backend keeps its own code: those are
+ * "your setup is wrong" (exit 4), not "the model is broken" (exit 5), and the
+ * exit code is the only thing a script has to tell them apart.
+ */
+function unreachable(err: unknown, provider: string, model: string): PprError {
+  const known = err instanceof PprError ? err : null;
+  const message = `${provider}/${model} did not answer: ${known?.message ?? (err as Error)?.message ?? String(err)}`;
+  if (known && (known.code === 'ECONFIG' || known.code === 'ENOAI')) {
+    return new PprError(known.code, message, known.hint ?? TEST_HINT);
+  }
+  return new PprError('EAI', message, TEST_HINT);
+}
 
 export function aiCommand(): Command {
   const cmd = new Command('ai').description('configure and test the model backend');
@@ -347,20 +373,55 @@ export function aiCommand(): Command {
 
   cmd
     .command('test')
-    .description('send one prompt to the configured model')
+    .description('check the configured model answers, and answers in JSON')
     .action(async (_flags: unknown, self: Command) =>
       withVault(self, async (vault) => {
-        if (!vault.provider) throw new PprError('ENOAI', 'No provider configured', 'Run `ppr ai setup`.');
+        const g = globals(self);
+        if (!vault.provider) {
+          throw new PprError(
+            'ENOAI',
+            'No model backend configured',
+            'Run `ppr ai setup` to pick one — the local options need no key.',
+          );
+        }
+        const { id: provider, model } = vault.provider;
         const started = Date.now();
-        const reply = await vault.provider.generate({
-          prompt: 'Reply with exactly: ppr ok',
-          maxTokens: 20,
-          temperature: 0,
-        });
-        const ms = Date.now() - started;
-        if (globals(self).json) return json({ provider: vault.provider.id, model: vault.provider.model, reply, ms });
-        out(`${color.green('✓')} ${vault.provider.id}/${vault.provider.model} replied in ${ms}ms`);
-        out(color.dim(`  ${reply.slice(0, 120)}`));
+
+        let raw: string;
+        try {
+          // Every AI task in ppr asks for JSON, so this is the thing worth
+          // testing: a model that answers politely in prose passes a "does it
+          // reply" check and fails every real command silently (L21).
+          raw = await vault.provider.generate({
+            system: 'Return exactly this JSON object and nothing else.',
+            prompt: '{"ok": true, "model_heard": "<one word: the model answering>"}',
+            json: true,
+            temperature: 0,
+            // No maxTokens override: the point is to exercise what the real
+            // tasks get. A tight budget of its own would have this pass or
+            // fail on a reasoning model's thinking tokens rather than on
+            // whether the backend works.
+          });
+        } catch (err) {
+          if (g.json) json({ ok: false, provider, model, latencyMs: Date.now() - started });
+          throw unreachable(err, provider, model);
+        }
+
+        const latencyMs = Date.now() - started;
+        const parsed = parseJsonLoose<Record<string, unknown>>(raw);
+        if (g.json) {
+          json({ ok: Boolean(parsed), provider, model, latencyMs, ...(parsed ? {} : { raw }) });
+        }
+        if (!parsed) {
+          throw new PprError(
+            'EAI',
+            `${provider}/${model} answered in ${latencyMs}ms, but not with JSON: ${snippet(raw)}`,
+            TEST_HINT,
+          );
+        }
+        if (g.json) return;
+        out(`${color.green('✓')} ${provider}/${model} answered in ${latencyMs}ms, and it was JSON`);
+        out(color.dim(`  ${snippet(raw)}`));
       }),
     );
 
