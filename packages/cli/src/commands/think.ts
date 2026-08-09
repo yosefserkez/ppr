@@ -404,6 +404,12 @@ const factJson = (fact: Fact) => ({
   from: fact.from,
   origin: fact.origin,
   status: fact.status,
+  // The date is the only structure the memory layer adds, and it is what the
+  // whole forward-looking half runs on. `entryJson` carries the owned
+  // frontmatter and nothing else, so without these two lines a script can see
+  // that `ppr brief` knows a date and cannot read it.
+  ...(fact.date ? { date: fact.date } : {}),
+  ...(fact.recurs ? { recurs: fact.recurs } : {}),
   ...(fact.conflicts.length ? { conflicts: fact.conflicts } : {}),
   ...(fact.supersededBy ? { supersededBy: fact.supersededBy } : {}),
 });

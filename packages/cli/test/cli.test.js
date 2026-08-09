@@ -759,6 +759,13 @@ test('brief counts down to a dated fact with no model at all', async () => {
     assert.ok(item.days >= 0 && item.days <= 366);
 
     assert.match((await ppr(dir, ['brief', '--within', '400', '--plain'])).stdout, /12 Sep/);
+
+    // The date is what `brief` runs on, so a script has to be able to read it
+    // back off the fact — it lives in `extra`, which the entry projection
+    // deliberately does not carry.
+    const [dated] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout);
+    assert.equal(dated.date, '0000-09-12');
+    assert.equal(dated.recurs, 'yearly');
   });
 });
 
