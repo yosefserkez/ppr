@@ -3,10 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { PprError } from '@ppr/core';
 import { globals } from '../context.js';
+import { dryRun, would } from '../dryrun.js';
 import { findOnPath } from '../external.js';
 import { NOTIFY_PLUGIN } from '../porcelain.js';
 import { color, errline, json, out, table } from '../render.js';
 import {
+  agentPath,
   crontabLine,
   install,
   installed,
@@ -14,6 +16,7 @@ import {
   jobArgv,
   JOBS,
   parseAt,
+  shellCommand,
   supportsInstall,
   uninstall,
   type JobName,
@@ -101,6 +104,20 @@ what is on the other end of it.`,
         out(crontabLine(schedule, argv));
         return void errline(color.dim('\nAdd that with `crontab -e`.'));
       }
+      // The artifact, not a summary of it: what launchd will read is a file at
+      // a path, waking a command at an hour, and those are the two things a
+      // person wants to check before it runs at 3am (L22 is what happens when
+      // nobody checked).
+      if (dryRun()) {
+        const when = parseAt(at)!;
+        would(`write ${agentPath(job)}`, [
+          `StartCalendarInterval: Hour ${when.hour}, Minute ${when.minute}`,
+          shellCommand(schedule, argv),
+        ]);
+        would(`load it with launchctl bootstrap`);
+        if (g.json) return json({ job, at, path: agentPath(job), argv, ...(pipe ? { pipe } : {}) });
+        return void errline(color.dim(`${job} would run daily at ${at}`));
+      }
       const path = await install(schedule, argv);
       if (g.json) return json({ job, at, path, argv, ...(pipe ? { pipe } : {}) });
       errline(`${color.green('✓')} ${job} runs daily at ${at}`);
@@ -116,6 +133,12 @@ what is on the other end of it.`,
       const job = asJob(name);
       if (!supportsInstall()) {
         throw new PprError('EINVALID', 'Nothing to remove', 'Edit your crontab with `crontab -e`.');
+      }
+      if (dryRun()) {
+        would(`remove ${agentPath(job)}`);
+        would(`unload it with launchctl bootout`);
+        if (globals(self).json) return json({ job, removed: false });
+        return void errline(color.dim(`${job} would be unscheduled`));
       }
       const removed = await uninstall(job);
       if (globals(self).json) return json({ job, removed });

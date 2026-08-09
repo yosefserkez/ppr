@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { PprError, truncate, VERSION } from '@ppr/core';
 import { globals, hoistGlobals, withVault } from './context.js';
+import { dryRun, printPlan, would } from './dryrun.js';
 import { closePrompts, hasStdin, resolveText } from './input.js';
 import { color, entryJson, errline, json, out, setColor, shortId } from './render.js';
 import { overview } from './overview.js';
@@ -66,6 +67,7 @@ program
   .option('-q, --quiet', 'ids only, no chrome')
   .option('--no-color', 'disable colour')
   .option('--no-ai', 'skip model generation for this command (transcription still works)')
+  .option('--dry-run', 'do everything but write: models still run, nothing is saved')
   .showHelpAfterError('(run `ppr --help`)')
   .enablePositionalOptions();
 
@@ -233,13 +235,26 @@ const argv = hoistGlobals(process.argv.slice(2));
  * runs for a word that is not one.
  */
 const external = argv.length ? externalFor(argv[0]!, commandNames()) : null;
-if (external) process.exit(runExternal(external, argv.slice(1), globals()));
+if (external) {
+  // A subcommand ppr has never heard of cannot be asked to preview itself, so
+  // the honest dry run is to name what would have been handed the terminal.
+  if (dryRun()) {
+    would(`exec ${[external, ...argv.slice(1)].join(' ')}`);
+    printPlan();
+    process.exit(0);
+  }
+  process.exit(runExternal(external, argv.slice(1), globals()));
+}
 
 try {
   await program.parseAsync(argv, { from: 'user' });
 } catch (err) {
   process.exitCode = reportError(err);
 } finally {
+  // After the command's own output: that output is the preview, and this is
+  // the footnote saying it was one. On stderr, so `--dry-run --json` still
+  // prints exactly the JSON a real run would have (I10).
+  printPlan();
   // Releases stdin, so a command that prompted can still exit on its own.
   closePrompts();
 }

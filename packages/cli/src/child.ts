@@ -25,6 +25,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { dryRun, would } from './dryrun.js';
 import { color, errline } from './render.js';
 
 /**
@@ -66,12 +67,27 @@ export interface ChildOptions {
    * config file — never for anything read out of a vault (see `hooks.ts`).
    */
   shell?: boolean;
+  /**
+   * What to call this in a `--dry-run` plan, when the command alone does not
+   * say enough — a hook is worth naming with the event that would have fired
+   * it. The command itself is used when this is absent.
+   */
+  because?: string;
 }
 
 const running = new Map<ChildProcess, Promise<ChildResult>>();
 
 /** Runs a program and reports how it went. Never throws, never blocks stdout. */
 export function runChild(command: string, opts: ChildOptions = {}): Promise<ChildResult> {
+  // The one place ppr runs anybody else's program is also the one place
+  // `--dry-run` has to stop it. Reported as `said` rather than silently
+  // succeeding, so a caller that announces "→ ppr-reminders-push" tells the
+  // truth about a copy that was not made.
+  if (dryRun()) {
+    would(`run ${opts.because ?? command}`);
+    return Promise.resolve({ ok: true, said: `not run (--dry-run)` });
+  }
+
   let child: ChildProcess;
   try {
     child = spawn(command, opts.args ?? [], {

@@ -14,6 +14,7 @@ import {
   readConfigLayer,
   writeConfigLayer,
 } from '@ppr/core/node';
+import { dryRun, would } from './dryrun.js';
 
 /**
  * Writing one setting, in one place.
@@ -39,9 +40,23 @@ export async function writeSetting(
     key,
     value,
   );
+  const next = getPath(merged, key);
 
-  await writeConfigLayer(file, applyDelta(layer, key, getPath(merged, key)));
-  return { file, value: getPath(merged, key) };
+  // Every settings write in ppr comes through here — `config set`, `ai key`,
+  // and every guided repair — so this is where a dry run says what the file
+  // would have gained without gaining it. The delta, not the file: a config
+  // layer holds only what the user changed, and that is the interesting line.
+  if (dryRun()) {
+    const before = getPath(await loadConfig(root), key);
+    would(`write ${file}`, [
+      ...(before === undefined ? [] : [`- ${key} = ${String(before)}`]),
+      `+ ${key} = ${String(next)}`,
+    ]);
+    return { file, value: next };
+  }
+
+  await writeConfigLayer(file, applyDelta(layer, key, next));
+  return { file, value: next };
 }
 
 /** Keeps written config files to the keys the user actually changed. */

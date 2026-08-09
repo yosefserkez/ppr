@@ -391,6 +391,85 @@ test('a hook on an event that does not exist is refused, not written', async () 
   });
 });
 
+test('--dry-run writes nothing, runs nothing, and says what it would have', async () => {
+  await withVault(async (dir) => {
+    const marker = join(dir, 'fired');
+    await writeScript(dir, 'ppr-marker', `touch "${marker}"`);
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-marker'], { env });
+
+    const { code, stderr } = await ppr(dir, ['--dry-run', 'shipped the migration'], { env });
+    assert.equal(code, 0);
+
+    const entries = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entries.length, 0, 'the vault is untouched');
+    assert.equal(existsSync(marker), false, 'and so is everything downstream of it');
+
+    // The plan is on stderr, and it names both halves: the file that would
+    // have appeared and the consumer that would have been told about it.
+    assert.match(stderr, /would write entries\/.*shipped-the-migration.*\.md/);
+    assert.match(stderr, /would run ppr-marker\s+\(entry\.created\)/);
+  });
+});
+
+test('--dry-run --json still prints the entry that would have been written', async () => {
+  await withVault(async (dir) => {
+    const { stdout, stderr } = await ppr(dir, ['--dry-run', '--json', 'a note about redis']);
+    // The preview is the natural one: exactly what a real run would print,
+    // with the plan kept off stdout so `--json` still pipes (I10).
+    const entry = JSON.parse(stdout);
+    assert.equal(entry.body, 'a note about redis');
+    assert.match(entry.path, /^entries\//);
+    assert.match(stderr, /^would /m);
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 0);
+  });
+});
+
+test('--dry-run on a write outside the vault leaves the file byte-identical', async () => {
+  await withVault(async (dir) => {
+    const file = join(dir, '.xdg', 'ppr', 'config.json');
+    await ppr(dir, ['config', 'set', 'display.listLimit', '11']);
+    const before = await readFile(file);
+
+    const { code, stderr } = await ppr(dir, ['config', 'set', 'display.listLimit', '99', '--dry-run']);
+    assert.equal(code, 0);
+    assert.deepEqual(await readFile(file), before, 'not a byte');
+    // And the plan is the delta, because a config layer holds only the delta.
+    assert.match(stderr, /would write .*config\.json/);
+    assert.match(stderr, /- display\.listLimit = 11/);
+    assert.match(stderr, /\+ display\.listLimit = 99/);
+  });
+});
+
+test('--dry-run shows the scheduler config without installing one', async () => {
+  await withVault(async (dir) => {
+    // HOME redirected: a test that wrote into a real ~/Library would be the
+    // litter this suite refuses to leave.
+    const { code, stdout, stderr } = await ppr(
+      dir,
+      ['schedule', 'add', 'brief', '--at', '08:30', '--dry-run'],
+      { env: { HOME: dir } },
+    );
+    assert.equal(code, 0);
+    if (process.platform === 'darwin') {
+      assert.match(stderr, /would write .*sh\.ppr\.brief\.plist/);
+      assert.match(stderr, /Hour 8, Minute 30/);
+      assert.equal(existsSync(join(dir, 'Library', 'LaunchAgents', 'sh.ppr.brief.plist')), false);
+    } else {
+      // Elsewhere ppr prints a crontab line and installs nothing either way.
+      assert.match(stdout, /^30 8 \* \* \* /m);
+    }
+  });
+});
+
+test('--dry-run previews what would happen, so an error still happens', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['memory', 'learn', '--dry-run']);
+    assert.equal(code, 4, 'no model configured is still no model configured');
+    assert.match(stderr, /needs a model/);
+  });
+});
+
 test('`ppr plugins` answers who hears what, and what a flag currently means', async () => {
   await withVault(async (dir) => {
     await writeScript(dir, 'ppr-notify', 'exit 0');

@@ -88,7 +88,7 @@ the same thing this command does.`,
         errline(color.dim(`Note: ${first} is not on your PATH yet.`));
       }
 
-      const file = await saveHooks(next);
+      const file = await saveHooks(next, `+ hooks.${event}: ${command}`);
       if (g.json) return json({ event, command, added: true, file });
       errline(`${color.green('✓')} ${event} → ${command}`);
       errline(color.dim(`  ${file}`));
@@ -115,7 +115,7 @@ the same thing this command does.`,
         return errline(color.dim(command ? `Not wired: ${event} → ${command}` : `Nothing on ${event}`));
       }
 
-      const file = await saveHooks(next);
+      const file = await saveHooks(next, removed.map((c) => `- hooks.${event}: ${c}`).join('\n       '));
       if (g.json) return json({ event, removed, file });
       for (const gone of removed) errline(`${color.red('✗')} ${event} → ${gone}`);
     });

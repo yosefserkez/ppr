@@ -33,6 +33,7 @@
 import { eventJson, isEventName, type VaultEvent, type VaultEventName } from '@ppr/core';
 import { globalConfigPath, readConfigLayer, writeConfigLayer } from '@ppr/core/node';
 import { runChild } from './child.js';
+import { dryRun, would } from './dryrun.js';
 import { color, errline } from './render.js';
 
 /** Event name -> the commands to run, in order. */
@@ -104,9 +105,17 @@ export function withoutHook(
  * Read-modify-write of the user layer, so somebody's `display.listLimit` is
  * still there afterwards. Returns the file, because naming it is how a person
  * finds out where their hooks actually live.
+ *
+ * `change` is the one line a `--dry-run` plan shows for it. The guard is here
+ * rather than at the two call sites so that a third one cannot forget it:
+ * this is the only function in ppr that writes a hook.
  */
-export async function saveHooks(hooks: Hooks, env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const file = globalConfigPath(env);
+export async function saveHooks(hooks: Hooks, change?: string): Promise<string> {
+  const file = globalConfigPath();
+  if (dryRun()) {
+    would(`write ${file}`, change ? [change] : []);
+    return file;
+  }
   const layer = await readConfigLayer(file);
   if (Object.keys(hooks).length) layer.hooks = hooks;
   else delete layer.hooks;
@@ -137,6 +146,7 @@ export function hookRunner(hooks: Hooks): ((event: VaultEvent) => void) | undefi
         shell: true,
         input: payload,
         env: { PPR_EVENT: event.event, PPR_VAULT: event.vault },
+        because: `${command}  (${event.event})`,
       }).then((result) => {
         // One line, on stderr, and never an exit code: the entry is written
         // and a courier that tripped is not the user's problem to solve now.

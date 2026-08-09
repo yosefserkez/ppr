@@ -12,7 +12,7 @@ import { commandProvider } from './node/command-provider.js';
 import { createTranscriber } from './node/transcribe.js';
 import { findVault, loadConfig, loadSecrets } from './node/paths.js';
 import { noVault } from './errors.js';
-import type { AIProvider } from './ports.js';
+import type { AIProvider, Storage } from './ports.js';
 import type { VaultEvent } from './events.js';
 import type { Config } from './config.js';
 import type { SecretSource } from './ai/providers.js';
@@ -72,6 +72,15 @@ export interface OpenVaultOptions {
   requireVault?: boolean;
   /** Told about every write. See `VaultOptions.onEvent`. */
   onEvent?: (event: VaultEvent) => void;
+  /**
+   * Wraps the storage before the vault is built on it.
+   *
+   * The vault discovers its own root, so a host that wants to decorate storage
+   * cannot construct it itself without duplicating that discovery. The CLI uses
+   * this for `--dry-run`: every write goes through this port, so a proxy that
+   * records instead of writing is the whole of "what would this have done".
+   */
+  wrapStorage?: (storage: Storage) => Storage;
 }
 
 /** One call to go from a shell invocation to a working `Vault`. */
@@ -93,10 +102,11 @@ export async function openVault(opts: OpenVaultOptions = {}): Promise<Vault> {
   const offline = opts.noAI || env.PPR_NO_AI === '1';
   const provider = offline ? undefined : lazyProvider(config, secrets);
   const transcriber = createTranscriber(config.transcribe, secrets);
+  const storage: Storage = new NodeStorage(found.root);
 
   return Vault.open({
     root: found.root,
-    storage: new NodeStorage(found.root),
+    storage: opts.wrapStorage ? opts.wrapStorage(storage) : storage,
     config,
     provider,
     transcriber,

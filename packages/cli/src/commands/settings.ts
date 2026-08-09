@@ -33,6 +33,7 @@ import {
 import { join } from 'node:path';
 import { globals, withVault } from '../context.js';
 import { writeSetting } from '../config-io.js';
+import { dryRun, refuseDryRun, would } from '../dryrun.js';
 import { confirm, promptLine } from '../input.js';
 import { select } from '../ui/select.js';
 import { color, json, out, errline, table } from '../render.js';
@@ -45,6 +46,10 @@ export function initCommand(): Command {
     .action(async (dir: string | undefined, _flags: unknown, self: Command) => {
       const g = globals(self);
       const target = findVault({ ...(dir || g.vault ? { explicit: dir ?? g.vault! } : {}) });
+      if (dryRun()) {
+        would(`create a vault at ${target.root}`, ['entries/, .ppr/config.json, README.md, .gitignore']);
+        return void (g.json ? json({ root: target.root, created: false }) : out(target.root));
+      }
       const { root, created } = await initVault(target.root);
 
       if (g.json) return json({ root, created });
@@ -267,6 +272,7 @@ export function aiCommand(): Command {
       const provider = picked.value;
       const defaults = PROVIDER_DEFAULTS[provider as keyof typeof PROVIDER_DEFAULTS] ?? {};
 
+      refuseDryRun('ppr ai setup', 'It asks questions and stores an API key as it goes.');
       const layerPath = globalConfigPath();
       const layer = await readConfigLayer(layerPath);
       const ai: Record<string, unknown> = { ...(layer.ai as Record<string, unknown>), provider };
@@ -337,6 +343,7 @@ export function aiCommand(): Command {
     .argument('[env-var]', 'variable name; worked out from your backend when omitted')
     .argument('[value]', 'the key itself; omit to be prompted')
     .action(async (first: string | undefined, second: string | undefined, _flags: unknown, self: Command) => {
+      refuseDryRun('ppr ai key', 'A key is stored outside the vault, in a 0600 file.');
       const g = globals(self);
       const root = findVault(g.vault ? { explicit: g.vault } : {}).root;
       const config = await loadConfig(root);

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { PprError } from '@ppr/core';
 import { findVault } from '@ppr/core/node';
 import { globals } from '../context.js';
+import { refuseDryRun } from '../dryrun.js';
 import { confirm } from '../input.js';
 import { Keyboard } from '../ui/keyboard.js';
 import { color, json, out, errline, table } from '../render.js';
@@ -113,6 +114,10 @@ export function setupCommand(): Command {
     .option('--all', 'walk every check, not just the main steps')
     .option('--list', 'list the step ids and exit')
     .action(async (steps: string[], flags: { all?: boolean; list?: boolean }, self: Command) => {
+      // `ppr doctor` is the preview: it inspects everything and changes
+      // nothing. Setup downloads a model and installs a helper, and there is
+      // no version of showing that which does not do it.
+      if (!flags.list) refuseDryRun('ppr setup', 'It downloads and installs things; `ppr doctor` reports without touching anything.');
       const g = globals(self);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
       const ctx = await checkContext(found.root, found.exists);
@@ -191,6 +196,7 @@ export function doctorCommand(): Command {
     .argument('[step...]', 'only report or fix these steps')
     .option('--fix', 'offer to repair whatever is broken')
     .action(async (steps: string[], flags: { fix?: boolean }, self: Command) => {
+      if (flags.fix) refuseDryRun('ppr doctor --fix', 'Plain `ppr doctor` is the dry run: it reports and changes nothing.');
       const g = globals(self);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
       const ctx = await checkContext(found.root, found.exists);

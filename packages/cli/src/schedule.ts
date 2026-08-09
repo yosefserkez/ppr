@@ -69,7 +69,7 @@ export function parseAt(at: string): { hour: number; minute: number } | null {
 
 export const labelFor = (job: JobName): string => `sh.ppr.${job}`;
 
-const agentPath = (job: JobName): string =>
+export const agentPath = (job: JobName): string =>
   join(homedir(), 'Library', 'LaunchAgents', `${labelFor(job)}.plist`);
 
 /**

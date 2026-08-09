@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { type Vault, type ListQuery, asDay, futureWhen, parseWhen, PprError } from '@ppr/core';
 import { openVault } from '@ppr/core/node';
 import { drainChildren } from './child.js';
+import { dryRun, recordingStorage, setDryRun } from './dryrun.js';
 import { hookRunner, loadHooks } from './hooks.js';
 import { setColor } from './render.js';
 
@@ -11,6 +12,7 @@ export interface GlobalOptions {
   color?: boolean;
   ai?: boolean;
   quiet?: boolean;
+  dryRun?: boolean;
 }
 
 let hoisted: GlobalOptions = {};
@@ -55,6 +57,9 @@ export function hoistGlobals(argv: string[]): string[] {
       case arg === '--no-ai':
         opts.ai = false;
         continue;
+      case arg === '--dry-run':
+        opts.dryRun = true;
+        continue;
       case arg === '--vault': {
         const dir = argv[++i];
         if (!dir || dir.startsWith('-')) {
@@ -71,6 +76,10 @@ export function hoistGlobals(argv: string[]): string[] {
     }
   }
   hoisted = opts;
+  // Set here rather than in `withVault`, because the commands that write
+  // outside the vault — `config set`, `hooks add`, `schedule add` — never open
+  // one, and they are exactly the writes worth previewing.
+  setDryRun(opts.dryRun === true);
   return rest;
 }
 
@@ -96,6 +105,12 @@ export async function withVault<T>(_cmd: Command, fn: (vault: Vault) => Promise<
     ...(opts.vault ? { vault: opts.vault } : {}),
     ...(opts.ai === false ? { noAI: true } : {}),
     ...(onEvent ? { onEvent } : {}),
+    // Reads pass through and writes are recorded, so the command runs for
+    // real right up to the point where it would have touched a file. Hooks
+    // still fire, and `runChild` records them rather than spawning: an event
+    // is what a write *says*, and a write that did not happen still had a
+    // consumer that would have heard about it.
+    ...(dryRun() ? { wrapStorage: recordingStorage } : {}),
   });
   try {
     return await fn(vault);
