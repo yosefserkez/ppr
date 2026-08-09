@@ -336,6 +336,25 @@ literals cannot span lines and take exactly five escapes, and an AppleScript
 from components, with `set day of d to 1` first so assigning a month never
 rolls the date into the next one.
 
+**An upstream that names an entry links to it.** A copy of one of your notes
+sitting in somebody else's app is a dead end unless it says where it came
+from, and "type `ppr show 6jc6ad` in a terminal" is not a link — by the time
+you are in a terminal you are not in Reminders any more. Every event payload
+carries `vault` (absolute) and `entry.path` (vault-relative) precisely so any
+consumer can build one without calling back into ppr, and a replayed or piped
+event still stands alone. The link **is the file**: `file://` plus the two
+joined, percent-encoded per path segment — `~/My Notes` is an ordinary vault
+and a raw space ends a URL wherever the app rendering it decides one ends
+(`encodeURI` is not enough: it leaves `#` alone, and a `#` in a filename
+truncates the link at a fragment). `ppr show <shortid>` goes underneath as the
+terminal-side form of the same thing. `plugins/ppr-reminders-push` is the
+worked example, and its `reminderNote`/`fileUrl` are pure and unit-tested.
+
+*Considered and rejected: a `ppr://` URL scheme.* It needs a registered app
+bundle, an installer, and a thing to keep working on every OS — to arrive at
+a link to a file that already has a perfectly good URL. The markdown is the
+source of truth (I1), so the markdown is the address.
+
 ### Where does my change go?
 
 | If it is... | It goes in... |

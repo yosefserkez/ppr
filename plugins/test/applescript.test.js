@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { applescriptString, notifyScript, osascriptHint, reminderScript } = require('../applescript.js');
-const { pushable } = require('../ppr-reminders-push');
+const { fileUrl, pushable, reminderNote } = require('../ppr-reminders-push');
 const { parseArgs } = require('../ppr-notify');
 
 /**
@@ -79,9 +79,16 @@ test('a reminder with no usable date still lands in the list', () => {
   }
 });
 
-test('a reminder carries the short id that traces it back to the entry', () => {
-  const script = reminderScript({ title: 'pay the rent', date: '2027-03-01', note: 'ppr 6jc6ad' });
-  assert.match(script, /body:"ppr 6jc6ad"/);
+test('a reminder carries the link that traces it back to the entry', () => {
+  const script = reminderScript({
+    title: 'pay the rent',
+    date: '2027-03-01',
+    note: 'pay the rent\nfile:///home/me/ppr/entries/2027/03/x.md\nppr show 6jc6ad',
+  });
+  // A multi-line note has to survive as one AppleScript literal, or the script
+  // does not compile at all — the same trap as a brief with newlines in it.
+  assert.match(script, /body:"pay the rent\\nfile:\/\/\/home\/me\/ppr\/entries\/2027\/03\/x\.md\\nppr show 6jc6ad"/);
+  assert.equal(script.split('\n').length, 9);
 });
 
 test('the automation refusal names the switch that fixes it', () => {
@@ -107,15 +114,55 @@ const event = (entry, name = 'entry.created') => ({
   event: name,
   at: '2026-08-09T09:00:00+01:00',
   vault: '/home/me/ppr',
-  entry: { id: 'k7x2m9q4b1c6jc6ad', kind: 'reminder', body: 'call the dentist', ...entry },
+  entry: {
+    id: 'k7x2m9q4b1c6jc6ad',
+    kind: 'reminder',
+    title: 'call the dentist',
+    body: 'call the dentist',
+    path: 'entries/2026/08/2026-08-10-0900-call-the-dentist-6ad.md',
+    ...entry,
+  },
 });
 
 test('a dated reminder is what gets pushed, and nothing else is', () => {
   const push = pushable(event({ extra: { date: '2026-08-10' } }));
   assert.equal(push.title, 'call the dentist');
   assert.equal(push.date, '2026-08-10');
-  // The short id, so `ppr show 6jc6ad` answers "where did this come from".
-  assert.equal(push.note, 'ppr 6jc6ad');
+  // An upstream that names an entry links to it: what it was about, where the
+  // file is, and the terminal-side form of the same thing.
+  assert.equal(
+    push.note,
+    [
+      'call the dentist',
+      'file:///home/me/ppr/entries/2026/08/2026-08-10-0900-call-the-dentist-6ad.md',
+      'ppr show 6jc6ad',
+    ].join('\n'),
+  );
+});
+
+test('the link survives a vault path with spaces in it', () => {
+  // `~/My Notes` is an ordinary Mac vault, and a raw space ends the URL
+  // wherever the app rendering it decides one ends.
+  assert.equal(
+    fileUrl('/Users/me/My Notes', 'entries/2026/08/a note & more.md'),
+    'file:///Users/me/My%20Notes/entries/2026/08/a%20note%20%26%20more.md',
+  );
+  // Encoded per segment, so the separators stay separators — and a `#` in a
+  // filename does not truncate the link at a fragment the way encodeURI leaves
+  // it to.
+  assert.equal(fileUrl('/v', 'entries/#1.md'), 'file:///v/entries/%231.md');
+  assert.equal(fileUrl('/v/', '/entries/x.md'), 'file:///v/entries/x.md');
+  // Nothing to link to is no link, rather than a broken one.
+  assert.equal(fileUrl('', 'entries/x.md'), null);
+  assert.equal(fileUrl('/v', undefined), null);
+});
+
+test('an event with no vault in it still says what it can', () => {
+  // The envelope carries `vault` precisely so a consumer never has to call
+  // back into ppr — but a hand-rolled or replayed one might not, and losing
+  // the title and the short id over a missing field would be the wrong trade.
+  const note = reminderNote({ id: 'k7x2m9q4b1c6jc6ad', title: 'x', path: 'entries/x.md' }, undefined);
+  assert.equal(note, 'x\nppr show 6jc6ad');
 });
 
 test('everything else on entry.created is silently none of its business', () => {

@@ -44,6 +44,31 @@ Or let the porcelain do it: `ppr remind --push`, or `ppr config set
 remind.push true`, sends the same `entry.created` event to the same program.
 The flag names the intent; this file name resolves the tool.
 
+`ppr hooks add entry.created ppr-reminders-push` writes that same block for
+you, and `ppr plugins` shows what is currently wired.
+
+## The deep link is the file
+
+A pushed reminder's note is three lines: what it was about, a `file://` URL,
+and `ppr show <shortid>`.
+
+```
+call the dentist
+file:///Users/me/My%20Notes/entries/2026/08/2026-08-10-0900-call-the-dentist-6ad.md
+ppr show 6jc6ad
+```
+
+Reminders.app renders that URL as a clickable link, and clicking it opens the
+markdown. There is no `ppr://` scheme and there is not going to be one: that
+needs a registered app bundle and an installer, to arrive at a link to a file
+that already has a perfectly good URL. **The file is the link.**
+
+Every consumer can do this. An event carries `vault` (absolute) and
+`entry.path` (vault-relative) exactly so you never have to call back into ppr
+for it — join them, percent-encode each path segment, done. Encode per
+segment rather than the whole string: `~/My Notes` is an ordinary vault, and
+`encodeURI` would leave a `#` in a filename to truncate the link.
+
 ## Swapping one out
 
 That indirection is the whole point. Put your own `ppr-reminders-push` earlier
