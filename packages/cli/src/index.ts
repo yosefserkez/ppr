@@ -37,6 +37,7 @@ import { aiCommand, configCommand, initCommand, reindexCommand } from './command
 import { doctorCommand, setupCommand } from './commands/setup.js';
 import { scheduleCommand } from './commands/schedule.js';
 import { hooksCommand } from './commands/hooks.js';
+import { pluginsCommand } from './commands/plugins.js';
 import { helpCommand, versionCommand } from './commands/meta.js';
 
 const EXIT_CODES: Record<string, number> = {
@@ -108,6 +109,7 @@ program.addCommand(aiCommand());
 program.addCommand(doctorCommand());
 program.addCommand(reindexCommand());
 program.addCommand(hooksCommand());
+program.addCommand(pluginsCommand());
 program.addCommand(helpCommand(program));
 program.addCommand(versionCommand());
 

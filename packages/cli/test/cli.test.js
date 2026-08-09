@@ -391,6 +391,39 @@ test('a hook on an event that does not exist is refused, not written', async () 
   });
 });
 
+test('`ppr plugins` answers who hears what, and what a flag currently means', async () => {
+  await withVault(async (dir) => {
+    await writeScript(dir, 'ppr-notify', 'exit 0');
+    await writeScript(dir, 'ppr-standup', 'echo "first on PATH"');
+    // A second copy, later on PATH. Whichever one `ppr standup` runs is the
+    // one `ppr plugins` has to name, or the report is worse than none.
+    await mkdir(join(dir, 'bin2'), { recursive: true });
+    await writeFile(join(dir, 'bin2', 'ppr-standup'), '#!/bin/sh\necho "shadowed"\n', { mode: 0o755 });
+    const env = { PATH: `${join(dir, 'bin')}:${join(dir, 'bin2')}:${process.env.PATH}` };
+
+    await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-notify'], { env });
+    await ppr(dir, ['config', 'set', 'plugins.standup.style', 'weekly']);
+
+    const report = JSON.parse((await ppr(dir, ['plugins', '--json'], { env })).stdout);
+    assert.deepEqual(report.events, [
+      { event: 'entry.created', command: 'ppr-notify', path: join(dir, 'bin', 'ppr-notify') },
+    ]);
+    // A flag names an intent; a name on PATH resolves the tool (I13). This is
+    // where you find out which one, without knowing to run `which`.
+    const notify = report.intents.find((i) => i.flag === 'brief --notify');
+    assert.equal(notify.path, join(dir, 'bin', 'ppr-notify'));
+    assert.equal(report.intents.find((i) => i.flag === 'remind --push').path, null);
+    assert.equal(report.intents.find((i) => i.flag === 'schedule --pipe').tool, null);
+
+    const standup = report.commands.filter((c) => c.word === 'standup');
+    assert.equal(standup.length, 1, 'one row per word, first on PATH');
+    assert.equal(standup[0].path, join(dir, 'bin', 'ppr-standup'));
+    assert.match((await ppr(dir, ['standup'], { env })).stdout, /first on PATH/);
+
+    assert.deepEqual(report.settings, { standup: { style: 'weekly' } });
+  });
+});
+
 test('an unknown word runs `ppr-<word>` from PATH, the way git does', async () => {
   await withVault(async (dir) => {
     await writeScript(
