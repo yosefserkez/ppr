@@ -278,7 +278,14 @@ ppr memory ls           # everything ppr thinks it knows
 ppr memory why <ref>    # the entries a fact came from
 ppr memory review       # settle facts that disagree
 ppr memory add "..."    # a fact by hand — learn never overwrites it
+ppr memory add "Emily's birthday is 20 October" --date 2002-10-20 --recurs yearly
 ```
+
+`--date` is what puts a fact into `ppr brief`. It is never read out of the
+sentence for you: `source: manual` is a promise that a fact is your words, and a
+command that quietly decided which part of them was the date would break it in
+the one place the layer asks to be trusted. When a fact looks dated, ppr names
+the flag and leaves the choice to you.
 
 `learn` is incremental and safe on a timer: it keeps a high-water mark, so a
 nightly run reads only what was written since the last one. It never settles a

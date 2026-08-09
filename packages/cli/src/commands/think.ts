@@ -5,6 +5,7 @@ import {
   factText,
   formatDay,
   heuristicBrief,
+  parseReminder,
   parseWhen,
   PprError,
   relativeAge,
@@ -15,7 +16,7 @@ import {
   type Upcoming,
   type VaultContext,
 } from '@ppr/core';
-import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
+import { dayFlag, filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
 import { select } from '../ui/select.js';
 import { color, entryJson, json, out, errline, shortenCitations, shortId } from '../render.js';
@@ -276,13 +277,43 @@ export function memoryCommand(): Command {
     .command('add')
     .description('record a fact directly — learn will never overwrite it')
     .argument('[text...]', 'the fact to remember')
-    .action(async (text: string[], _flags: unknown, self: Command) =>
+    .option('--date <when>', 'the day it carries, so `ppr brief` counts down to it')
+    .option('--recurs <how>', 'yearly, for a birthday or an anniversary')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr memory add "Emily likes dark chocolate"
+  ppr memory add "Emily's birthday is 20 October" --date 2002-10-20 --recurs yearly
+  ppr memory add "The lease ends in March" --date "1 march"
+
+--date is what puts a fact into \`ppr brief\`. It is never read out of the
+sentence for you: a fact you typed is your words, and inferring which part of
+them was the date is the kind of help that quietly gets it wrong.`,
+    )
+    .action(async (text: string[], flags: { date?: string; recurs?: string }, self: Command) =>
       withVault(self, async (vault) => {
         const body = await resolveText(text);
         if (!body) throw new PprError('EINVALID', 'Nothing to remember');
-        const entry = await vault.addFact(body);
-        if (globals(self).json) json(entryJson(entry));
-        else errline(`${color.green('✓')} ${color.dim(shortId(entry.id))} ${entry.title}`);
+        const now = vault.now();
+        const date = flags.date ? dayFlag('--date', flags.date, now) : undefined;
+        const recurs = parseRecurs(flags.recurs);
+        if (recurs && !date) {
+          throw new PprError(
+            'EINVALID',
+            '--recurs needs a --date to recur from',
+            'Example: ppr memory add "..." --date 2002-10-20 --recurs yearly',
+          );
+        }
+
+        const entry = await vault.addFact(body, {
+          ...(date ? { date } : {}),
+          ...(recurs ? { recurs } : {}),
+        });
+        const g = globals(self);
+        if (g.json) return json(entryJson(entry));
+        errline(`${color.green('✓')} ${color.dim(shortId(entry.id))} ${entry.title}`);
+        if (!date && !g.quiet) hintADate(body, now);
       }),
     );
 
@@ -409,6 +440,35 @@ export function memoryCommand(): Command {
     );
 
   return cmd;
+}
+
+/** `--recurs`, which only ever says one thing. Anything else is refused. */
+function parseRecurs(value: string | undefined): 'yearly' | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim().toLowerCase() === 'yearly') return 'yearly';
+  throw new PprError(
+    'EINVALID',
+    `--recurs only understands "yearly", got "${value}"`,
+    'Birthdays and anniversaries repeat; everything else is a date that happens once.',
+  );
+}
+
+/**
+ * Says a fact looks dated, and stops there.
+ *
+ * Extracting the date would be easy and would be wrong: `source: manual` is a
+ * promise that a fact is the user's own words, and a command that quietly
+ * decided which part of them was a date would break it in the one place the
+ * layer asks to be trusted. So the hint names the flag and lets them decide —
+ * which is also why it is deterministic and does not care whether a model is
+ * configured.
+ */
+function hintADate(text: string, now: Date): void {
+  const dated = Boolean(parseReminder(text, now).date) || /\b(?:19|20)\d{2}\b/.test(text);
+  if (!dated) return;
+  errline(
+    color.dim('  That looks like it carries a date. `--date <when>` puts it in `ppr brief`.'),
+  );
 }
 
 /** What `ppr memory review` can do with a disagreeing pair. */

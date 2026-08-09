@@ -716,11 +716,32 @@ export class Vault {
     );
   }
 
-  /** Records a fact the user wrote themselves. Nothing automatic rewrites it. */
-  async addFact(text: string): Promise<Entry> {
+  /**
+   * Records a fact the user wrote themselves. Nothing automatic rewrites it.
+   *
+   * The date is passed rather than read out of the sentence, and that is the
+   * point: a manual fact is the user's words, so nothing here may decide that
+   * "20 October" was the important part. Saying which day it carries is an
+   * instruction, not an inference.
+   */
+  async addFact(
+    text: string,
+    fields: { date?: string; recurs?: FactRecurrence } = {},
+  ): Promise<Entry> {
     const line = text.trim();
     if (!line) throw new PprError('EINVALID', 'Nothing to remember');
-    return this.add({ body: line, kind: MEMORY_KIND, title: truncate(line, 70), source: 'manual' });
+    const date = fields.date ? parseFactDate(fields.date) : undefined;
+    if (fields.date && !date) throw new PprError('EINVALID', `Not a calendar day: ${fields.date}`);
+    return this.add({
+      body: line,
+      kind: MEMORY_KIND,
+      title: truncate(line, 70),
+      source: 'manual',
+      extra: factExtra({
+        ...(date ? { date } : {}),
+        ...(date && fields.recurs ? { recurs: fields.recurs } : {}),
+      }),
+    });
   }
 
   /**

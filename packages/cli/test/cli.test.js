@@ -899,6 +899,47 @@ test('brief counts down to a dated fact with no model at all', async () => {
   });
 });
 
+test('a fact added by hand can carry its date, and is never read for one', async () => {
+  await withVault(async (dir) => {
+    const added = await ppr(dir, [
+      'memory', 'add', "Emily's birthday is 20 October", '--date', '2002-10-20', '--recurs', 'yearly',
+    ]);
+    assert.equal(added.code, 0);
+
+    const [fact] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout);
+    assert.equal(fact.date, '2002-10-20');
+    assert.equal(fact.recurs, 'yearly');
+    assert.equal(fact.origin, 'manual');
+
+    // The point of the flag: a hand-added birthday now reaches the brief,
+    // which it never could before.
+    const [item] = JSON.parse((await ppr(dir, ['brief', '--within', '400', '--json'])).stdout);
+    assert.equal(item.id, fact.id);
+    assert.ok(item.ordinal >= 24, 'and it knows which birthday this is');
+
+    // Without the flag the date stays unread — a manual fact is your words,
+    // not something to be parsed — but the flag gets named.
+    const bare = await ppr(dir, ['memory', 'add', "Priya's birthday is 12 September"]);
+    assert.match(bare.stderr, /--date/);
+    const [, priya] = JSON.parse((await ppr(dir, ['memory', 'ls', '--json'])).stdout).reverse();
+    assert.equal(priya.date, undefined, 'nothing inferred it for you');
+
+    // A fact with nothing dateish about it gets no advice.
+    const plain = await ppr(dir, ['memory', 'add', 'Emily likes dark chocolate']);
+    assert.doesNotMatch(plain.stderr, /--date/);
+
+    for (const [argv, message] of [
+      [['memory', 'add', 'x', '--date', 'whenever'], /Could not understand --date/],
+      [['memory', 'add', 'x', '--date', '2002-10-20', '--recurs', 'monthly'], /only understands "yearly"/],
+      [['memory', 'add', 'x', '--recurs', 'yearly'], /needs a --date/],
+    ]) {
+      const bad = await ppr(dir, argv);
+      assert.equal(bad.code, 2, argv.join(' '));
+      assert.match(bad.stderr, message);
+    }
+  });
+});
+
 test('context hands another tool everything ppr knows, without a model', async () => {
   await withVault(async (dir) => {
     await ppr(dir, ['+', 'rewrote the CSV importer today']);
