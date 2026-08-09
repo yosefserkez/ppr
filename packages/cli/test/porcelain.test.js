@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { briefNotification, pushDecision } from '../dist/bridge.js';
+import { briefNotification, pushDecision } from '../dist/porcelain.js';
 
 /**
  * The decisions only. Nothing here posts a banner or creates a reminder: the
  * pure/executor split exists so the half that can be wrong runs on any
- * machine, including one with no osascript on it.
+ * machine, including one with no plugin installed on it.
  */
 
 /** An `Upcoming`, cut down to what the notification actually reads. */
@@ -56,7 +56,7 @@ test('nothing upcoming is nothing to post', () => {
 });
 
 test('a reminder only leaves the vault when something says it may', () => {
-  const base = { dated: true, platform: 'darwin' };
+  const base = { dated: true, available: true };
   assert.deepEqual(pushDecision({ ...base, configured: true }), { push: true });
   assert.deepEqual(pushDecision({ ...base, configured: false, asked: true }), { push: true });
 
@@ -72,20 +72,23 @@ test('a reminder only leaves the vault when something says it may', () => {
 test('a line with no day is never pushed, however loudly it was asked for', () => {
   // It became an ordinary log, and there is nothing for Reminders to ring
   // about — so `--push` cannot conjure a reminder out of it.
-  assert.deepEqual(pushDecision({ configured: true, asked: true, dated: false, platform: 'darwin' }), {
+  assert.deepEqual(pushDecision({ configured: true, asked: true, dated: false, available: true }), {
     push: false,
     reason: 'undated',
   });
 });
 
-test('asking for a push away from macOS is answered, not silently dropped', () => {
-  assert.deepEqual(pushDecision({ configured: true, dated: true, platform: 'linux' }), {
+test('asking for a push with nothing to push with is answered, not dropped', () => {
+  // This used to ask "is this a Mac". It now asks "is there a program on PATH
+  // that does this" — the same question, without ppr having to know the answer
+  // for every operating system there is.
+  assert.deepEqual(pushDecision({ configured: true, dated: true, available: false }), {
     push: false,
-    reason: 'unsupported',
+    reason: 'unavailable',
   });
-  // With nothing switched on there is nothing to explain, so the platform
-  // never comes up.
-  assert.deepEqual(pushDecision({ configured: false, dated: true, platform: 'linux' }), {
+  // With nothing switched on there is nothing to explain, so whether the tool
+  // exists never comes up.
+  assert.deepEqual(pushDecision({ configured: false, dated: true, available: false }), {
     push: false,
     reason: 'off',
   });

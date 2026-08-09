@@ -16,7 +16,7 @@ import {
   type Upcoming,
   type VaultContext,
 } from '@ppr/core';
-import { announceBrief } from '../bridge.js';
+import { announceBrief } from '../porcelain.js';
 import { dayFlag, filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
 import { hasStdin, readStdin, resolveText } from '../input.js';
 import { select } from '../ui/select.js';
@@ -75,7 +75,7 @@ export function briefCommand(): Command {
     .description('what is coming up: dated facts, reminders, and anything else with a date')
     .option('--within <days>', 'how far ahead to look', '30')
     .option('--plain', 'skip the model and print the dates')
-    .option('--notify', 'also post it as a macOS notification')
+    .option('--notify', 'also send it to `ppr-notify` (a macOS banner by default)')
     .addHelpText(
       'after',
       `
@@ -85,9 +85,13 @@ export function briefCommand(): Command {
 "days" is negative when it is overdue: an unfinished reminder stays visible
 for a week after its day.
 
---notify posts the soonest item as a banner and prints exactly what it printed
-before. Nothing upcoming posts nothing — a daily "nothing coming up" ping is
-how notifications stop being read. It is what \`ppr schedule add brief\` runs.`,
+--notify sends the soonest item to \`ppr-notify\` on your PATH and prints
+exactly what it printed before. Nothing upcoming sends nothing — a daily
+"nothing coming up" ping is how notifications stop being read.
+
+The program ppr ships posts a macOS banner; swap it for one that talks to ntfy
+or a lamp and --notify means that instead. The plain pipe does the same job
+with no flag at all:  ppr brief --plain | ppr-notify`,
     )
     .action(async (flags: { within?: string; plain?: boolean; notify?: boolean }, self: Command) =>
       withVault(self, async (vault) => {

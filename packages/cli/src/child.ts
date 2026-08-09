@@ -18,10 +18,10 @@
  * with.
  *
  * **The wait is bounded, and it is a wait rather than a leash.** A command that
- * has finished its own work does not sit there while a courier talks to
- * Reminders.app: `drainChildren()` waits a few seconds and then lets go,
- * leaving the child to finish on its own. Killing it would be worse — the copy
- * it was halfway through making is the whole reason it was started.
+ * has finished its own work does not sit there while a courier finishes:
+ * `drainChildren()` waits a couple of seconds and then lets go, leaving the
+ * child to run on. Killing it would be worse — the copy it was halfway through
+ * making is the whole reason it was started.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -31,9 +31,10 @@ import { color, errline } from './render.js';
  * How long a command waits, at the very end, for children it started.
  *
  * Two seconds is under the threshold where a person decides a command has
- * hung, and every consumer worth having is finished long before it: writing a
- * notification takes milliseconds. The one that is not — Reminders.app opened
- * cold, which used to justify a twenty-second timeout — is exactly the case
+ * hung, and every consumer worth having is finished long before it: posting a
+ * notification takes milliseconds. The slow case — a plugin waking a cold
+ * application that then waits on a sync service, which is what justified a
+ * twenty-second timeout when this code lived inside ppr — is exactly the one
  * where waiting longer helps nobody, because the answer is going to be "fine"
  * either way. So ppr stops waiting and says so, and the child carries on.
  */

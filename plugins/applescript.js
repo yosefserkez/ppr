@@ -1,34 +1,24 @@
 /**
- * The one-way bridge to macOS.
+ * Talking to macOS, for the two plugins that do.
  *
- * ppr hands things to the operating system; it never becomes one of its apps.
- * Delivery is delegated here exactly the way editing is delegated to $EDITOR
- * and scheduling to launchd: a notification is posted, a reminder is created,
- * and that is the end of the conversation. Nothing is read back, nothing is
- * synced, and the vault is never the place a change from Reminders.app lands.
- * The markdown files stay the source of truth (I1), which they could not be if
- * two systems both owned the same row.
+ * This used to be `core/src/node/macos.ts`, back when ppr itself knew what a
+ * notification was. It does not any more: everything outside the vault is a
+ * third-party tool, the operating system included (I13), so the AppleScript
+ * lives out here with the programs that run it. There is exactly one copy of
+ * it — the escaping and the date assembly below were each a real bug, and two
+ * copies would drift apart at the worst possible moment.
  *
- * That stance is what makes failure cheap. Every caller writes the entry
- * first; a bridge that cannot reach osascript costs a notification and nothing
- * else, so these functions report rather than throw (I2's shape).
+ * Nothing here runs anything. The builders are pure so they can be tested on a
+ * machine that is not a Mac, and so a test run never posts a notification or
+ * leaves a reminder in somebody's list.
  *
- * The split is the one `schedule.ts` uses: the script builders are pure and
- * exhaustively testable, and the executors around them are three lines each.
- * No test in this repo runs osascript.
+ * Plain CommonJS with no dependencies: a plugin has to run under whatever node
+ * happens to be on the box, from whatever directory it was installed into.
  */
 
-import { run } from './exec.js';
-import { responsibleApp } from './microphone.js';
+'use strict';
 
-/** What a bridge call did. A failure is a hint, never an exception. */
-export interface BridgeResult {
-  ok: boolean;
-  /** The next thing the user could do about it. Never a stack trace. */
-  hint?: string;
-}
-
-const AS_ESCAPES: Record<string, string> = {
+const AS_ESCAPES = {
   '\\': '\\\\',
   '"': '\\"',
   '\n': '\\n',
@@ -46,21 +36,11 @@ const AS_ESCAPES: Record<string, string> = {
  * anything more elaborate here would be inventing rules AppleScript does not
  * have.
  */
-export const applescriptString = (value: string): string =>
-  `"${value.replace(/[\\"\n\r\t]/g, (ch) => AS_ESCAPES[ch]!)}"`;
+const applescriptString = (value) => `"${String(value).replace(/[\\"\n\r\t]/g, (ch) => AS_ESCAPES[ch])}"`;
 
 /** A banner. `title` is the line people read; `body` is the two under it. */
-export const notifyScript = (title: string, body: string): string =>
+const notifyScript = (title, body) =>
   `display notification ${applescriptString(body)} with title ${applescriptString(title)}`;
-
-export interface ReminderPush {
-  /** What the reminder says. Becomes the reminder's name. */
-  title: string;
-  /** `YYYY-MM-DD`. Anything else is ignored — see `reminderScript`. */
-  date?: string;
-  /** Free text on the reminder. ppr puts the short id here so it traces back. */
-  note?: string;
-}
 
 /**
  * The hour a pushed reminder alerts at.
@@ -96,7 +76,7 @@ const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
  * reminder still sits in the list where its owner will see it, which is more
  * than a mis-parsed one would do.
  */
-export function reminderScript(reminder: ReminderPush): string {
+function reminderScript(reminder) {
   const day = reminder.date ? ISO_DAY.exec(reminder.date) : null;
   const properties = [
     `name:${applescriptString(reminder.title)}`,
@@ -123,6 +103,30 @@ export function reminderScript(reminder: ReminderPush): string {
 }
 
 /**
+ * The app macOS holds responsible for a terminal process.
+ *
+ * The same table `core/src/node/microphone.ts` keeps for the microphone
+ * prompt, and the same fact about macOS underneath both: permission is
+ * attributed to the terminal, not to the program running inside it.
+ */
+function responsibleApp(env = process.env) {
+  const program = env.TERM_PROGRAM || '';
+  const known = {
+    Apple_Terminal: 'Terminal',
+    iTerm: 'iTerm',
+    'iTerm.app': 'iTerm',
+    ghostty: 'Ghostty',
+    WarpTerminal: 'Warp',
+    vscode: 'Visual Studio Code',
+    Hyper: 'Hyper',
+    WezTerm: 'WezTerm',
+    kitty: 'kitty',
+    alacritty: 'Alacritty',
+  };
+  return known[program] || program || 'your terminal';
+}
+
+/**
  * What to say when osascript refused.
  *
  * -1743 is macOS declining to let this process drive another app. It arrives
@@ -131,34 +135,17 @@ export function reminderScript(reminder: ReminderPush): string {
  * filed under — and the app is the terminal, not ppr, which is the part nobody
  * guesses. Everything else is passed through as the one line it was.
  */
-export function osascriptHint(stderr: string): string {
-  if (stderr.includes('-1743')) {
-    return `Allow ${responsibleApp()} in System Settings › Privacy & Security › Automation`;
+function osascriptHint(stderr, env = process.env) {
+  if (String(stderr).includes('-1743')) {
+    return `Allow ${responsibleApp(env)} in System Settings › Privacy & Security › Automation`;
   }
-  return stderr.trim().split('\n')[0]?.trim() || 'osascript failed without saying why';
+  return String(stderr).trim().split('\n')[0]?.trim() || 'osascript failed without saying why';
 }
 
-async function osascript(script: string, unsupported: string, timeoutMs: number): Promise<BridgeResult> {
-  if (process.platform !== 'darwin') return { ok: false, hint: unsupported };
-  try {
-    const { code, stderr } = await run('osascript', ['-e', script], { timeoutMs });
-    return code === 0 ? { ok: true } : { ok: false, hint: osascriptHint(stderr) };
-  } catch (err) {
-    // A machine with no osascript at all is the same class of outcome as one
-    // that refused: the entry is already on disk either way.
-    return { ok: false, hint: (err as Error).message };
-  }
-}
-
-/** Posts a banner. Instant, or it has already failed. */
-export const notify = (title: string, body: string): Promise<BridgeResult> =>
-  osascript(notifyScript(title, body), 'Notifications are macOS only', 10_000);
-
-/**
- * Creates a reminder in the default list, and forgets about it.
- *
- * The longer timeout is Reminders.app: the first push of a session launches it
- * cold and may wait on iCloud before it answers.
- */
-export const pushReminder = (reminder: ReminderPush): Promise<BridgeResult> =>
-  osascript(reminderScript(reminder), 'Reminders.app is macOS only', 20_000);
+module.exports = {
+  applescriptString,
+  notifyScript,
+  osascriptHint,
+  reminderScript,
+  responsibleApp,
+};

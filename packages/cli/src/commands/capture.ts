@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type Entry, type Vault, parseReminder, truncate, PprError } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
-import { handToReminders, pushDecision } from '../bridge.js';
+import { canPush, handToReminders, pushDecision } from '../porcelain.js';
 import { dayFlag, globals, withVault } from '../context.js';
 import { confirm, editorName, hasStdin, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -192,6 +192,7 @@ export async function remind(
     configured: vault.config.remind.push,
     ...(flags.push !== undefined ? { asked: flags.push } : {}),
     dated: Boolean(date),
+    available: canPush(),
   });
 
   if (!date) {
@@ -204,7 +205,7 @@ export async function remind(
     );
     const logged = await vault.add({ body: text, kind: vault.config.capture.defaultKind });
     const saved = await finish(vault, logged, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
-    await handToReminders(saved, undefined, decision);
+    await handToReminders(vault, saved, decision);
     return saved;
   }
 
@@ -216,7 +217,7 @@ export async function remind(
   // Last, and unable to undo anything before it: the markdown is already on
   // disk, so a bridge that fails costs a copy in another app and never the
   // entry (I2's shape).
-  await handToReminders(saved, date, decision);
+  await handToReminders(vault, saved, decision);
   return saved;
 }
 
@@ -229,7 +230,7 @@ export function remindCommand(): Command {
     .option('-p, --print', 'print the saved entry')
     // `--push` is declared first on purpose: commander gives a lone `--no-x`
     // a default of true, and this has to default to whatever config says.
-    .option('--push', 'also create it in Reminders.app (macOS)')
+    .option('--push', 'also hand it to `ppr-reminders-push` (Reminders.app by default)')
     .option('--no-push', 'keep it in the vault only')
     .addHelpText(
       'after',
@@ -247,10 +248,12 @@ Examples:
 A line with no readable date is kept as a log instead — kind says which — and
 the reason goes to stderr. A reminder with no day would never surface at all.
 
---push hands a copy to Reminders.app, so the alarm arrives on your watch
-rather than only in a terminal. It is one-way and never read back; the entry is
-written first and stands whatever the bridge does. \`ppr config set
-remind.push true\` makes it the default for every reminder, quoted ones too.`,
+--push hands a copy to whatever \`ppr-reminders-push\` is on your PATH — the
+one ppr ships creates it in Reminders.app, so the alarm arrives on your watch
+rather than only in a terminal. Replace that program and --push means whatever
+you replaced it with. It is one-way and never read back; the entry is written
+first and stands whatever the plugin does. \`ppr config set remind.push true\`
+makes it the default for every reminder, quoted ones too.`,
     )
     .action(async (text: string[], flags: { at?: string; print?: boolean; push?: boolean }, self: Command) =>
       withVault(self, async (vault) => {

@@ -5,26 +5,38 @@
 # The installed binary is a small wrapper, not a copy: edit the source, run
 # `ppr`, and it rebuilds itself first. Nothing to reinstall after a `git pull`.
 #
-#   ./scripts/install.sh              install or update
-#   ./scripts/install.sh --uninstall  remove it
-#   ./scripts/install.sh --dir DIR    install somewhere specific
+# The plugins in plugins/ go on PATH alongside it, because `ppr brief --notify`
+# and `ppr remind --push` resolve them by name and would otherwise be flags
+# that explain why they did nothing. They are symlinks into the repo, so they
+# update with a `git pull` too, and they are inert on anything but macOS.
+#
+#   ./scripts/install.sh               install or update
+#   ./scripts/install.sh --uninstall   remove it, plugins included
+#   ./scripts/install.sh --dir DIR     install somewhere specific
+#   ./scripts/install.sh --no-plugins  just the ppr command
 #
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME=ppr
 UNINSTALL=0
+PLUGINS=1
 BIN_DIR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --uninstall) UNINSTALL=1 ;;
+    --no-plugins) PLUGINS=0 ;;
     --dir) BIN_DIR="${2:?--dir needs a path}"; shift ;;
-    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+# The reference consumers, installed by name because that is how they are
+# found: `--notify` looks for `ppr-notify` on PATH and nowhere else.
+PLUGIN_NAMES="ppr-notify ppr-reminders-push"
 
 # --- pick an install directory that is already on PATH ------------------------
 
@@ -42,6 +54,14 @@ TARGET="$BIN_DIR/$NAME"
 if [ "$UNINSTALL" = 1 ]; then
   rm -f "$TARGET"
   echo "removed $TARGET"
+  for plugin in $PLUGIN_NAMES; do
+    # Only ours: a symlink pointing back into this repo. Somebody else's
+    # `ppr-notify` earlier on PATH is the whole point of the convention.
+    if [ -L "$BIN_DIR/$plugin" ] && [ "$(readlink "$BIN_DIR/$plugin")" = "$REPO/plugins/$plugin" ]; then
+      rm -f "$BIN_DIR/$plugin"
+      echo "removed $BIN_DIR/$plugin"
+    fi
+  done
   exit 0
 fi
 
@@ -102,6 +122,24 @@ exec node "\$ENTRY" "\$@"
 WRAPPER
 chmod +x "$TARGET"
 
+# --- plugins ------------------------------------------------------------------
+#
+# Symlinks rather than copies, for the same reason `ppr` is a wrapper: edit the
+# file, and the installed command is the edited one. An existing plugin that is
+# *not* ours is left exactly where it is — replacing `ppr-notify` with your own
+# is the supported way to change what `--notify` means.
+
+if [ "$PLUGINS" = 1 ]; then
+  for plugin in $PLUGIN_NAMES; do
+    dest="$BIN_DIR/$plugin"
+    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+      echo "! $dest exists and is not ours — leaving it alone"
+      continue
+    fi
+    ln -sf "$REPO/plugins/$plugin" "$dest"
+  done
+fi
+
 # --- verify -------------------------------------------------------------------
 
 VERSION="$("$TARGET" --version)"
@@ -124,6 +162,9 @@ echo
 echo "  ppr init            create your vault"
 echo "  ppr \"first note\"    write something"
 echo "  ppr --help          everything else"
+if [ "$PLUGINS" = 1 ]; then
+  echo "  ppr brief --notify  uses ppr-notify, installed alongside (see plugins/)"
+fi
 echo
 echo "Edit the source and just run ppr — it rebuilds itself."
 echo "For instant rebuilds while working: pnpm dev"

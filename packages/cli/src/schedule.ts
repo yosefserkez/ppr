@@ -25,12 +25,12 @@ export const JOBS = {
     defaultAt: '03:00',
   },
   brief: {
-    // `--notify` is what makes this job worth having. Without it a scheduled
-    // brief writes what is coming up into a launchd log at 8am, where nobody
-    // is looking — the command was already composable, and the missing half
-    // was delivery.
-    args: ['brief', '--notify'],
-    description: 'what is coming up, as a notification',
+    // Plain, because delivery is not this command's business. A scheduled
+    // brief with nowhere to go writes into a launchd log at 8am where nobody
+    // is looking — and the answer to that is a pipe, which is what `--pipe`
+    // (or its `--notify` spelling) adds.
+    args: ['brief', '--plain'],
+    description: 'what is coming up',
     defaultAt: '08:00',
   },
 } as const;
@@ -45,6 +45,16 @@ export interface Schedule {
   at: string;
   /** Vault to run against, when it is not the default. */
   vault?: string;
+  /**
+   * A shell command to pipe the job's output into.
+   *
+   * The generic version of "and then tell me about it": ppr already prints
+   * something worth reading, and a pipe is how Unix has delivered output to
+   * somewhere else for fifty years. `--pipe ppr-notify` is a banner,
+   * `--pipe "mail -s brief me"` is an email, and ppr needs to know about
+   * neither.
+   */
+  pipe?: string;
 }
 
 /** `08:00` -> `{hour: 8, minute: 0}`. Throws nothing; returns null instead. */
@@ -92,7 +102,9 @@ export function jobArgv(schedule: Schedule, node: string, script: string): strin
 export function plist(schedule: Schedule, argv: string[]): string {
   const at = parseAt(schedule.at) ?? { hour: 3, minute: 0 };
   const log = join(homedir(), 'Library', 'Logs', `${labelFor(schedule.job)}.log`);
-  const args = argv.map((a) => `    <string>${escapeXml(a)}</string>`).join('\n');
+  const args = programArguments(schedule, argv)
+    .map((a) => `    <string>${escapeXml(a)}</string>`)
+    .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -123,8 +135,29 @@ ${args}
 /** The crontab line for everything that is not macOS. */
 export function crontabLine(schedule: Schedule, argv: string[]): string {
   const at = parseAt(schedule.at) ?? { hour: 3, minute: 0 };
-  return `${at.minute} ${at.hour} * * * ${argv.map(quote).join(' ')}`;
+  return `${at.minute} ${at.hour} * * * ${shellCommand(schedule, argv)}`;
 }
+
+/**
+ * The job as one shell command, pipe included.
+ *
+ * cron already runs its line through a shell, so a pipe there is a real pipe
+ * and nothing has to be arranged. launchd does not — it execs an argv — so a
+ * piped job is handed to `/bin/sh -c` and this same string is what it gets.
+ * One function, so the two schedulers cannot end up running different things.
+ *
+ * The argv is quoted (absolute paths with spaces in them are ordinary on a
+ * Mac); the pipe target is not, because it is a command line the user typed
+ * and quoting it would break the first `--flag` they put in it.
+ */
+export function shellCommand(schedule: Schedule, argv: string[]): string {
+  const command = argv.map(quote).join(' ');
+  return schedule.pipe ? `${command} | ${schedule.pipe}` : command;
+}
+
+/** The argv launchd should exec: the job itself, or a shell holding the pipe. */
+export const programArguments = (schedule: Schedule, argv: string[]): string[] =>
+  schedule.pipe ? ['/bin/sh', '-c', shellCommand(schedule, argv)] : argv;
 
 const quote = (arg: string): string => (/[\s"']/.test(arg) ? `'${arg.replace(/'/g, `'\\''`)}'` : arg);
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
-import { crontabLine, jobArgv, labelFor, parseAt, plist } from '../dist/schedule.js';
+import { crontabLine, jobArgv, labelFor, parseAt, plist, shellCommand } from '../dist/schedule.js';
 
 test('a time of day is parsed or refused, never guessed', () => {
   assert.deepEqual(parseAt('08:00'), { hour: 8, minute: 0 });
@@ -17,12 +17,44 @@ test('a scheduled job is an ordinary ppr command', () => {
     ['/opt/homebrew/bin/node', '/repo/dist/index.js', 'memory', 'learn', '--quiet'],
   );
   // The vault has to be explicit: cron has no cwd worth inheriting. And the
-  // scheduled brief notifies, because a brief printed into a launchd log at
-  // 8am is a brief nobody reads.
+  // job itself is a plain command — where its output goes is a pipe's job,
+  // not a flag ppr has to grow for every destination there is.
   assert.deepEqual(
     jobArgv({ job: 'brief', at: '08:00', vault: '~/notes' }, '/usr/bin/node', '/repo/dist/index.js'),
-    ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief', '--notify'],
+    ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief', '--plain'],
   );
+});
+
+test('a piped job is one command in cron and a shell in launchd', () => {
+  const schedule = { job: 'brief', at: '08:00', pipe: 'ppr-notify' };
+  const argv = ['/usr/bin/node', '/repo/dist/index.js', 'brief', '--plain'];
+
+  // cron already runs its line through a shell, so the pipe is a real pipe.
+  assert.equal(
+    crontabLine(schedule, argv),
+    '0 8 * * * /usr/bin/node /repo/dist/index.js brief --plain | ppr-notify',
+  );
+
+  // launchd execs an argv and has no shell, so it is handed one — running the
+  // same string, so the two schedulers cannot do different things.
+  const xml = plist(schedule, argv);
+  assert.match(xml, /<string>\/bin\/sh<\/string>/);
+  assert.match(xml, /<string>-c<\/string>/);
+  assert.match(xml, /brief --plain \| ppr-notify/);
+
+  // Without a pipe there is no shell in the way at all.
+  assert.doesNotMatch(plist({ job: 'brief', at: '08:00' }, argv), /\/bin\/sh/);
+});
+
+test('a piped job quotes the argv but not the command the user typed', () => {
+  const schedule = { job: 'brief', at: '08:00', pipe: 'mail -s "brief" me@example.com' };
+  const line = shellCommand(schedule, ['/usr/bin/node', '/my notes/index.js', 'brief']);
+
+  // A path with a space in it is ordinary on a Mac and has to survive.
+  assert.match(line, /'\/my notes\/index\.js'/);
+  // The pipe target is a command line somebody typed; quoting it would break
+  // the first flag they put in it.
+  assert.ok(line.endsWith('| mail -s "brief" me@example.com'), line);
 });
 
 test('a scheduled job names its interpreter instead of trusting PATH', () => {

@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+/**
+ * ppr-notify — text on stdin becomes a macOS notification.
+ *
+ *   ppr brief --plain | ppr-notify
+ *   ppr brief --plain | ppr-notify --title "this morning"
+ *
+ * The read composer. ppr's reads already compose with a pipe, so nothing here
+ * needs an event, a hook, or ppr's cooperation — this program would work
+ * identically on the output of `date` or `fortune`.
+ *
+ * It is also what `ppr brief --notify` runs: the flag names the intent, this
+ * name on PATH resolves the tool. Replace this file with one that talks to
+ * ntfy, or Slack, or a lamp, and the flag means that instead.
+ */
+
+'use strict';
+
+const { notifyScript } = require('./applescript.js');
+const { note, osascript, readStdin, supported } = require('./osascript.js');
+
+const DEFAULT_TITLE = 'ppr';
+
+/** `--title X` / `--title=X`, and nothing else — the body arrives on stdin. */
+function parseArgs(argv) {
+  let title = DEFAULT_TITLE;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--title' || arg === '-t') title = argv[++i] ?? title;
+    else if (arg.startsWith('--title=')) title = arg.slice('--title='.length);
+    else if (arg === '--help' || arg === '-h') return { help: true, title };
+  }
+  return { help: false, title };
+}
+
+const USAGE = `usage: <text> | ppr-notify [--title TITLE]
+
+Posts a macOS notification. The body is read from stdin; anything else is
+ignored. Prints nothing on stdout, so it is safe anywhere in a pipeline.`;
+
+async function main() {
+  const { help, title } = parseArgs(process.argv.slice(2));
+  if (help) {
+    note(USAGE);
+    return 0;
+  }
+
+  const body = (await readStdin()).trim();
+  // Nothing to say is not a failure. A scheduled `ppr brief | ppr-notify` on a
+  // quiet day should be silent, not an error in a log nobody reads.
+  if (!body) return 0;
+
+  if (!supported()) {
+    // Never non-zero: a hook target that turns a Linux user's capture red is
+    // worse than no notification at all.
+    note('ppr-notify: notifications are macOS only — nothing posted.');
+    return 0;
+  }
+
+  const result = await osascript(notifyScript(title, body), { timeoutMs: 10_000 });
+  if (!result.ok) {
+    note(`ppr-notify: ${result.hint}`);
+    return 1;
+  }
+  return 0;
+}
+
+// Only when run as a command, so the argument parsing can be unit-tested by
+// requiring this file without it waiting on stdin.
+if (require.main === module) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      note(`ppr-notify: ${err && err.message ? err.message : err}`);
+      process.exit(1);
+    },
+  );
+}
+
+module.exports = { parseArgs };

@@ -955,9 +955,9 @@ test('a reminder with no readable date is logged, and says so', async () => {
 test('nothing leaves the vault for Reminders.app unless it was asked to', async () => {
   await withVault(async (dir) => {
     // Off is the default: writing into another app is not something ppr does
-    // to you. Only the paths that reach no osascript are exercised here — the
-    // decision itself is unit-tested in bridge.test.js, and a test suite that
-    // creates real reminders is a test suite that leaves litter behind.
+    // to you. Only the paths that spawn nothing are exercised here — the
+    // decision itself is unit-tested in porcelain.test.js, and a test suite
+    // that creates real reminders is one that leaves litter behind.
     assert.equal((await ppr(dir, ['config', 'get', 'remind.push'])).stdout.trim(), 'false');
 
     for (const args of [
@@ -970,8 +970,78 @@ test('nothing leaves the vault for Reminders.app unless it was asked to', async 
     ]) {
       const { code, stderr } = await ppr(dir, args);
       assert.equal(code, 0, `${args.join(' ')} should still save`);
-      assert.doesNotMatch(stderr, /Reminders/, `${args.join(' ')} should not touch Reminders.app`);
+      assert.doesNotMatch(stderr, /ppr-reminders-push/, `${args.join(' ')} should hand over nothing`);
     }
+  });
+});
+
+test('--push hands the entry to whatever `ppr-reminders-push` is', async () => {
+  await withVault(async (dir) => {
+    const seen = join(dir, 'pushed.json');
+    // A stand-in for the one ppr ships. The flag names the intent; this name
+    // on PATH is what resolves the tool — swap the file, swap the meaning.
+    await writeScript(dir, 'ppr-reminders-push', `cat > "${seen}"`);
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+
+    const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
+    assert.equal(code, 0);
+    assert.match(stderr, /→ ppr-reminders-push/, 'and it said where the copy went');
+
+    // What it is handed is the `entry.created` event, in exactly the shape a
+    // hook on `entry.created` receives: one serializer, two doors.
+    const event = JSON.parse(await readFile(seen, 'utf8'));
+    assert.equal(event.event, 'entry.created');
+    assert.equal(event.v, 1);
+    assert.equal(event.entry.kind, 'reminder');
+    assert.equal(event.entry.body, 'call the dentist');
+    assert.equal(event.entry.extra.date, dayFromNow(1), 'the day, without reading the file back');
+
+    // `remind.push` is the same act without the flag, and it reaches the same
+    // program — `ppr "remind me …"` included (L18).
+    await ppr(dir, ['config', 'set', 'remind.push', 'true']);
+    await ppr(dir, ['remind me to renew the passport tomorrow'], { env });
+    assert.match(JSON.parse(await readFile(seen, 'utf8')).entry.body, /renew the passport/);
+  });
+});
+
+test('--push with nothing installed explains itself and keeps the entry', async () => {
+  await withVault(async (dir) => {
+    await mkdir(join(dir, 'empty'), { recursive: true });
+    const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], {
+      env: { PATH: join(dir, 'empty') },
+    });
+
+    assert.equal(code, 0, 'a missing courier is not a failed write');
+    assert.match(stderr, /Nothing called ppr-reminders-push on your PATH/);
+    assert.match(stderr, /entry is in your vault/i);
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 1);
+  });
+});
+
+test('--notify sends the brief to whatever `ppr-notify` is', async () => {
+  await withVault(async (dir) => {
+    const seen = join(dir, 'notified.txt');
+    await writeScript(dir, 'ppr-notify', `printf 'title=%s\\n' "$2" > "${seen}"\ncat >> "${seen}"`);
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+
+    const { code, stdout } = await ppr(dir, ['brief', '--notify'], { env });
+    assert.equal(code, 0);
+
+    const notified = await readFile(seen, 'utf8');
+    // The banner is built from the items, not from the prose: a title that is
+    // one line and a body that is two.
+    assert.match(notified, /title=ppr · call the dentist/);
+    assert.match(notified, /—/);
+    // I10: --notify is a side effect, so stdout is what it was without it.
+    assert.equal(stdout, (await ppr(dir, ['brief'])).stdout);
+
+    // And with nothing on PATH the convention is named rather than guessed at.
+    await mkdir(join(dir, 'empty'), { recursive: true });
+    const bare = await ppr(dir, ['brief', '--notify'], { env: { PATH: join(dir, 'empty') } });
+    assert.equal(bare.code, 0);
+    assert.match(bare.stderr, /Nothing called ppr-notify on your PATH/);
+    assert.equal(bare.stdout, stdout, 'the output is the output either way');
   });
 });
 

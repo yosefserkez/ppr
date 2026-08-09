@@ -1,0 +1,100 @@
+#!/usr/bin/env node
+/**
+ * ppr-reminders-push — a dated reminder, copied into Reminders.app.
+ *
+ *   ppr remind tomorrow call the dentist        (via `remind.push` / --push)
+ *   "hooks": { "entry.created": ["ppr-reminders-push"] }
+ *
+ * The write consumer. It reads one ppr event as JSON on stdin and decides for
+ * itself whether the event is any of its business — which is what makes it
+ * usable as a hook on `entry.created`, where it will be handed every log,
+ * note, and clip as well.
+ *
+ * One-way and fire-and-forget, and that is a property of the design rather
+ * than a limitation to fix later: nothing is read back, so nothing over there
+ * can write anything in here, so the markdown stays the only owner of the row
+ * (ppr's I1). A tickbox moved in Reminders.app does not reach the vault.
+ *
+ * By the time this runs the entry is on disk. Everything below reports on
+ * stderr and never pretends the vault write failed.
+ */
+
+'use strict';
+
+const { reminderScript } = require('./applescript.js');
+const { note, osascript, readStdin, supported } = require('./osascript.js');
+
+/**
+ * Which events this is about.
+ *
+ * `entry.created` plus a filter on `kind`, because ppr's event names are
+ * deliberately coarse — there is no `reminder.created` to subscribe to, and
+ * every consumer does its own filtering with three lines like these.
+ *
+ * A reminder with no date has nothing to ring at, and one already marked done
+ * has nothing to ring about. Both are ordinary, so both are silent: this runs
+ * on every capture and must not narrate.
+ */
+function pushable(event) {
+  if (!event || event.event !== 'entry.created') return null;
+  const entry = event.entry;
+  if (!entry || entry.kind !== 'reminder') return null;
+  const extra = entry.extra || {};
+  if (!extra.date || extra.status) return null;
+  return {
+    title: entry.body,
+    date: String(extra.date),
+    // The short id is the whole of the trace back, and the only thing written
+    // into somebody else's app: it is what lets `ppr show 6jc6ad` answer
+    // "where did this come from". The last six characters, because the first
+    // ten are a timestamp and look identical for the same minute.
+    note: `ppr ${String(entry.id).slice(-6)}`,
+  };
+}
+
+async function main() {
+  const raw = (await readStdin()).trim();
+  if (!raw) {
+    note('ppr-reminders-push: expects a ppr event as JSON on stdin.');
+    return 2;
+  }
+
+  let event;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    note('ppr-reminders-push: that was not JSON.');
+    return 2;
+  }
+
+  const reminder = pushable(event);
+  if (!reminder) return 0;
+
+  if (!supported()) {
+    note('ppr-reminders-push: Reminders.app is macOS only — the entry is in your vault.');
+    return 0;
+  }
+
+  // The longer timeout is Reminders.app: the first push of a session launches
+  // it cold and may wait on iCloud before it answers.
+  const result = await osascript(reminderScript(reminder), { timeoutMs: 20_000 });
+  if (!result.ok) {
+    note(`ppr-reminders-push: ${result.hint}`);
+    return 1;
+  }
+  return 0;
+}
+
+// Only when run as a command: the filter above is unit-tested by requiring
+// this file, and requiring it must not go looking for an event on stdin.
+if (require.main === module) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      note(`ppr-reminders-push: ${err && err.message ? err.message : err}`);
+      process.exit(1);
+    },
+  );
+}
+
+module.exports = { pushable };

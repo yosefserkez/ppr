@@ -1,12 +1,18 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { applescriptString, notifyScript, osascriptHint, reminderScript } from '../dist/node.js';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { applescriptString, notifyScript, osascriptHint, reminderScript } = require('../applescript.js');
+const { pushable } = require('../ppr-reminders-push');
+const { parseArgs } = require('../ppr-notify');
 
 /**
- * The script builders only. Nothing here runs osascript: the bridge is split
+ * The script builders only. Nothing here runs osascript: the plugins are split
  * pure/executor precisely so the part that can be wrong is testable on a
  * machine that is not a Mac, and so a test run never posts a notification or
  * leaves a reminder behind.
+ *
+ * These assertions moved out of `core/test/macos.test.js` with the code they
+ * describe — every one of them was a bug once, and rewriting them from scratch
+ * on the way out of core would have thrown that away.
  */
 
 test('a string reaches AppleScript as the string that went in', () => {
@@ -86,4 +92,53 @@ test('the automation refusal names the switch that fixes it', () => {
   // Anything else is reported as itself, on one line.
   assert.equal(osascriptHint('execution error: boom (-42)\ntrailing noise'), 'execution error: boom (-42)');
   assert.match(osascriptHint('   \n  '), /without saying why/);
+});
+
+/**
+ * Which events `ppr-reminders-push` is about.
+ *
+ * It is wired to `entry.created`, which means it is handed every log, note,
+ * and clip as well — ppr's event names are coarse on purpose and a consumer
+ * does its own filtering. Getting this wrong in the loud direction would put
+ * every note you write into Reminders.app.
+ */
+const event = (entry, name = 'entry.created') => ({
+  v: 1,
+  event: name,
+  at: '2026-08-09T09:00:00+01:00',
+  vault: '/home/me/ppr',
+  entry: { id: 'k7x2m9q4b1c6jc6ad', kind: 'reminder', body: 'call the dentist', ...entry },
+});
+
+test('a dated reminder is what gets pushed, and nothing else is', () => {
+  const push = pushable(event({ extra: { date: '2026-08-10' } }));
+  assert.equal(push.title, 'call the dentist');
+  assert.equal(push.date, '2026-08-10');
+  // The short id, so `ppr show 6jc6ad` answers "where did this come from".
+  assert.equal(push.note, 'ppr 6jc6ad');
+});
+
+test('everything else on entry.created is silently none of its business', () => {
+  // An ordinary capture. This runs on every one of them.
+  assert.equal(pushable(event({ kind: 'log', extra: {} })), null);
+  assert.equal(pushable(event({ kind: 'memory', extra: { date: '2026-08-10' } })), null);
+  // A reminder with no day has nothing to ring at.
+  assert.equal(pushable(event({ extra: {} })), null);
+  assert.equal(pushable(event({ extra: undefined })), null);
+  // One already dealt with has nothing to ring about.
+  assert.equal(pushable(event({ extra: { date: '2026-08-10', status: 'done' } })), null);
+  // And an update is not a creation: pushing on every edit would file the same
+  // reminder again every time you fixed a typo.
+  assert.equal(pushable(event({ extra: { date: '2026-08-10' } }, 'entry.updated')), null);
+  assert.equal(pushable(event({ extra: { date: '2026-08-10' } }, 'entry.completed')), null);
+  assert.equal(pushable(null), null);
+  assert.equal(pushable({}), null);
+});
+
+test('ppr-notify takes a title and reads the rest from stdin', () => {
+  assert.equal(parseArgs([]).title, 'ppr');
+  assert.equal(parseArgs(['--title', 'this morning']).title, 'this morning');
+  assert.equal(parseArgs(['--title=this morning']).title, 'this morning');
+  assert.equal(parseArgs(['-t', 'x']).title, 'x');
+  assert.equal(parseArgs(['--help']).help, true);
 });

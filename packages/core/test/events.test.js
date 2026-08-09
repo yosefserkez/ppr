@@ -99,7 +99,12 @@ test('a reminder is entry.created plus a filter, not a name of its own', async (
   const created = events.filter((e) => e.event === 'entry.created');
   assert.equal(created.length, 1);
   assert.equal(created[0].entry.kind, 'reminder');
-  assert.equal(eventJson(created[0]).entry.body, 'call the dentist');
+
+  const wire = eventJson(created[0]);
+  assert.equal(wire.entry.body, 'call the dentist');
+  // And the day it is for, without reading the file back: a consumer that has
+  // to call in has already lost a race with the next write.
+  assert.equal(wire.entry.extra.date, '2027-03-01');
 });
 
 test('learning announces each verdict and then the run', async () => {

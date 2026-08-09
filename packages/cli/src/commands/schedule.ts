@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { PprError } from '@ppr/core';
 import { globals } from '../context.js';
+import { findOnPath } from '../external.js';
+import { NOTIFY_PLUGIN } from '../porcelain.js';
 import { color, errline, json, out, table } from '../render.js';
 import {
   crontabLine,
@@ -55,13 +57,42 @@ export function scheduleCommand(): Command {
     .description('schedule a job to run daily')
     .argument('<job>', `one of: ${Object.keys(JOBS).join(', ')}`)
     .option('--at <HH:MM>', 'time of day, 24-hour local')
-    .action(async (name: string, flags: { at?: string }, self: Command) => {
+    .option('--pipe <command>', 'pipe the output into a command, e.g. `ppr-notify`')
+    .option('--notify', `shorthand for --pipe ${NOTIFY_PLUGIN}`)
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr schedule add learn                        fold new entries in at 3am
+  ppr schedule add brief --notify               a banner at 8am
+  ppr schedule add brief --pipe ppr-notify      the same thing, spelled out
+  ppr schedule add brief --pipe "mail -s brief me@example.com"
+
+A scheduled brief with nowhere to go writes into a log nobody reads, so the
+useful half is delivery — and delivery is a pipe. ppr does not need to know
+what is on the other end of it.`,
+    )
+    .action(async (name: string, flags: { at?: string; pipe?: string; notify?: boolean }, self: Command) => {
       const job = asJob(name);
       const at = flags.at ?? JOBS[job].defaultAt;
       if (!parseAt(at)) throw new PprError('EINVALID', `--at takes HH:MM, got "${at}"`);
 
       const g = globals(self);
-      const schedule: Schedule = { job, at, ...(g.vault ? { vault: g.vault } : {}) };
+      // `--notify` is sugar and nothing else: it resolves to the conventional
+      // name and goes down the same generic path, so there is one mechanism
+      // rather than a blessed one and a general one.
+      const pipe = flags.pipe ?? (flags.notify ? NOTIFY_PLUGIN : undefined);
+      const schedule: Schedule = {
+        job,
+        at,
+        ...(g.vault ? { vault: g.vault } : {}),
+        ...(pipe ? { pipe } : {}),
+      };
+      if (pipe && !findOnPath(pipe.split(/\s+/)[0]!)) {
+        // Not an error: a scheduled job is allowed to name something you are
+        // about to install. But a silent 8am no-op is worth a word now.
+        errline(color.dim(`Note: ${pipe.split(/\s+/)[0]} is not on your PATH yet.`));
+      }
       const argv = jobArgv(schedule, process.execPath, entryScript());
 
       // Nothing to install into: print the line and let the user place it,
@@ -71,7 +102,7 @@ export function scheduleCommand(): Command {
         return void errline(color.dim('\nAdd that with `crontab -e`.'));
       }
       const path = await install(schedule, argv);
-      if (g.json) return json({ job, at, path, argv });
+      if (g.json) return json({ job, at, path, argv, ...(pipe ? { pipe } : {}) });
       errline(`${color.green('✓')} ${job} runs daily at ${at}`);
       errline(color.dim(`  ${path}`));
     });

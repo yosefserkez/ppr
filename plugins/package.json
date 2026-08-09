@@ -1,0 +1,5 @@
+{
+  "name": "ppr-plugins",
+  "private": true,
+  "description": "Reference consumers of ppr events. Plain CommonJS: no build, no dependencies."
+}

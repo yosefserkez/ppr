@@ -64,8 +64,12 @@ export interface Config {
   };
   remind: {
     /**
-     * Hand a dated reminder to the OS as it is captured — Reminders.app on
-     * macOS, nothing anywhere else.
+     * Hand a dated reminder to something else as it is captured.
+     *
+     * *What* something else is, core has no idea and does not want one: the
+     * host resolves a conventional program name — `ppr-reminders-push` in the
+     * CLI — and this switch only says whether to. Replacing that program
+     * changes where reminders go with no change here (I13).
      *
      * Off, because writing into another app is not something a note tool may
      * do to you by default. On, the copy is one-way and never read back: the

@@ -173,9 +173,13 @@ export function serializeEntry(entry: Entry): string {
  * parser, and two definitions of "an entry, as JSON" would eventually disagree
  * about a field.
  *
- * Owned frontmatter only. `extra` is deliberately absent — a fact's `date`,
- * `from`, and `status` are exposed by `factJson`, which is where the memory
- * layer decides what it publishes (I3 keeps them round-tripping either way).
+ * `extra` rides along when there is any, and that is what makes an event
+ * payload complete: a consumer told "a reminder was created" must be able to
+ * see the day it is for without reading the file back or racing the next
+ * write. It is absent on the overwhelming majority of entries, which have no
+ * unowned frontmatter at all, so ordinary `--json` output is unchanged.
+ * `factJson` still exists on top of this: it flattens the memory layer's
+ * fields for people reading `ppr memory ls --json` with their eyes.
  */
 export const entryJson = (entry: Entry) => ({
   id: entry.id,
@@ -189,6 +193,7 @@ export const entryJson = (entry: Entry) => ({
   ...(entry.pinned ? { pinned: true } : {}),
   path: entry.path,
   body: entry.body,
+  ...(Object.keys(entry.extra).length ? { extra: entry.extra } : {}),
 });
 
 function firstDate(...candidates: unknown[]): Date {
