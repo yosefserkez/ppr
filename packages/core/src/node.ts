@@ -27,6 +27,16 @@ export { commandProvider } from './node/command-provider.js';
 export { createTranscriber, record, type Recording } from './node/transcribe.js';
 export { downloadFile, formatBytes, modelsDir, type DownloadProgress } from './node/download.js';
 export { analyzeWav, type AudioLevel } from './node/audio.js';
+export {
+  applescriptString,
+  notify,
+  notifyScript,
+  osascriptHint,
+  pushReminder,
+  reminderScript,
+  type BridgeResult,
+  type ReminderPush,
+} from './node/macos.js';
 export { ensureSwiftHelper, type SwiftHelper } from './node/swift.js';
 export {
   DEFAULT_DEVICE,
