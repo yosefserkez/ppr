@@ -181,6 +181,39 @@ test('ask still returns the right entries with no model', async () => {
   assert.equal(answer.used[0].body, 'Dropped redis for latency reasons');
 });
 
+test('a model is only asked for a date the words did not plainly give', async () => {
+  const seen = [];
+  const vault = await makeVault({
+    provider: fakeProvider(JSON.stringify({ text: 'renew the passport', date: '2026-09-01' }), { record: seen }),
+  });
+
+  // Deterministic: the model must not be consulted, and must not be able to
+  // change the answer when it is switched on.
+  const plain = await vault.reminderFrom('remind me tomorrow to call the dentist');
+  assert.equal(plain.text, 'call the dentist');
+  assert.ok(plain.date);
+  assert.equal(seen.length, 0, 'no model call for a date the rules can read');
+
+  const drafted = await vault.reminderFrom('remind me before the passport expires next quarter');
+  assert.equal(drafted.date, '2026-09-01');
+  assert.equal(drafted.text, 'renew the passport');
+  assert.match(seen[0].prompt, /Today is/, 'a model with no date invents one');
+});
+
+test('a model that cannot read a date never costs the words', async () => {
+  for (const bad of ['', 'sorry, I cannot help', '{"date": "next tuesday"}', '{"text": "x"']) {
+    const vault = await makeVault({ provider: fakeProvider(bad) });
+    const parsed = await vault.reminderFrom('remind me about the passport thing');
+    assert.equal(parsed.date, undefined, `expected no date for: ${bad}`);
+    assert.match(parsed.text, /passport thing/);
+  }
+  // A provider that throws is the same story: no date, all the words.
+  const broken = await makeVault({
+    provider: { id: 'x', model: 'x', local: true, generate: () => Promise.reject(new Error('down')) },
+  });
+  assert.match((await broken.reminderFrom('remind me about the passport thing')).text, /passport/);
+});
+
 test('recap falls back to a grouped list without a model', async () => {
   const vault = await makeVault();
   await vault.add({ body: 'Did a thing', title: 'Did a thing' });

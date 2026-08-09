@@ -32,7 +32,12 @@ import {
   type Occurrence,
   type VaultState,
 } from './memory.js';
-import { REMINDER_KEYS, reminderExtra } from './remind.js';
+import {
+  parseReminder,
+  REMINDER_KEYS,
+  reminderExtra,
+  type ParsedReminder,
+} from './remind.js';
 import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
@@ -299,6 +304,28 @@ export class Vault {
   }
 
   // -------------------------------------------------------------- reminders
+
+  /**
+   * Reads a typed line into a day and a thing to do.
+   *
+   * Deterministic first, always: "tomorrow: call the dentist" and "call the
+   * dentist tomorrow" never need a model, and the answer must not change when
+   * one is switched on. A model is asked only when the words hold a date no
+   * rule here can see, gets one attempt, and is validated before it is
+   * believed. If it fails, or is absent, the result simply has no date — and
+   * the caller keeps the words as a log rather than filing a reminder nobody
+   * will ever be reminded of (I2).
+   */
+  async reminderFrom(text: string, opts: { signal?: AbortSignal } = {}): Promise<ParsedReminder> {
+    const now = this.clock.now();
+    const read = parseReminder(text, now);
+    if (read.date || !this.provider) return read;
+
+    const drafted = await tasks
+      .extractReminder(read.text || text, { provider: this.provider, now, ...opts })
+      .catch(() => null);
+    return drafted ?? read;
+  }
 
   /**
    * Records something to be reminded about. An ordinary entry with a date on

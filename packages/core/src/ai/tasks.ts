@@ -4,7 +4,7 @@ import { PprError } from '../errors.js';
 import { factKey, factText, parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
-import { countdown, formatDay } from '../util/time.js';
+import { countdown, dayKey, formatDay } from '../util/time.js';
 import { asStringList, parseJsonLoose } from './json.js';
 import { GENERIC_FOLLOWUPS, heuristicBrief, heuristicDistill, heuristicRecap } from './fallback.js';
 
@@ -511,6 +511,68 @@ export async function reconcileFacts(
     }
   }
   return out;
+}
+
+const REMINDER_SYSTEM = `${VOICE}
+
+The user typed one line asking to be reminded of something. Separate *when* it
+is from *what* it is.
+
+Rules:
+- Answer with the day only, as YYYY-MM-DD. Today's date is given; do the
+  arithmetic from it.
+- A weekday with no other qualification means the next such day, never today.
+- text: what they want to be reminded of, with the when-phrase and any
+  "remind me to" removed. Their words, not a rewrite of them.
+- If there is genuinely no date in the line, leave "date" out. That is a valid
+  answer and a better one than a guess — the line is kept either way, and a
+  wrong date is worse than none.
+
+Return JSON: {"text": string, "date": "YYYY-MM-DD", "recurs": "yearly"}
+- recurs: "yearly" only when the line says it repeats every year. Otherwise omit.`;
+
+/**
+ * The one model call in the reminder path, and only when the deterministic
+ * read found no date at all.
+ *
+ * Returns nothing rather than throwing on anything it cannot use: the caller's
+ * fallback is to keep the words as a log, which must happen whether the model
+ * is missing, slow, or wrong (I2).
+ */
+export interface ReminderDraft {
+  text: string;
+  /** `YYYY-MM-DD`, validated. A draft with no date is not a draft at all. */
+  date: string;
+  recurs?: FactRecurrence;
+}
+
+export async function extractReminder(
+  input: string,
+  opts: TaskOptions & { now?: Date } = {},
+): Promise<ReminderDraft | null> {
+  if (!opts.provider) return null;
+  const now = opts.now ?? new Date();
+
+  const raw = await opts.provider.generate({
+    system: REMINDER_SYSTEM,
+    // Without the date a model invents one, and a reminder for the wrong day
+    // is worse than the log it would otherwise have been.
+    prompt: `Today is ${formatDay(now)} ${now.getFullYear()} (${dayKey(now)}).\n\nLine: ${input}`,
+    json: true,
+    maxTokens: 200,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+
+  const parsed = parseJsonLoose<{ text?: unknown; date?: unknown; recurs?: unknown }>(raw);
+  const date = parseFactDate(parsed?.date);
+  if (!date) return null;
+  const text = String(parsed?.text ?? '').trim();
+  return {
+    // A model that dropped the words is not allowed to cost them.
+    text: text || input,
+    date,
+    ...(parsed?.recurs === 'yearly' ? { recurs: 'yearly' as const } : {}),
+  };
 }
 
 const BRIEF_SYSTEM = `${VOICE}
