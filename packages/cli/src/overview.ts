@@ -27,6 +27,10 @@ export function overview(vault: Vault): void {
   // Not gated on there being facts: a reminder is upcoming too, and a vault
   // can hold one without a fact store at all.
   const soonest = vault.upcoming({ withinDays: 30 })[0];
+  // The undated ones only. A dated todo is already what `soonest` is about,
+  // and counting it in both places would make the two lines disagree about
+  // how much is waiting.
+  const todos = vault.todos().filter((todo) => todo.days === undefined).length;
 
   if (!stats.entries) {
     out(color.bold('ppr') + color.dim(`  ${vault.root}`));
@@ -47,7 +51,8 @@ export function overview(vault: Vault): void {
     color.bold('ppr') +
       color.dim(
         `  ${vault.root}  ·  ${written} ${written === 1 ? 'entry' : 'entries'}  ·  ${today.length} today` +
-          (facts ? `  ·  ${facts} ${facts === 1 ? 'fact' : 'facts'}` : ''),
+          (facts ? `  ·  ${facts} ${facts === 1 ? 'fact' : 'facts'}` : '') +
+          (todos ? `  ·  ${todos} ${todos === 1 ? 'todo' : 'todos'}` : ''),
       ),
   );
 
@@ -71,9 +76,13 @@ export function overview(vault: Vault): void {
     table([
       ['ppr "text"', color.dim('log something')],
       ['ppr ls', color.dim('browse your entries')],
+      // A count in the header with no command underneath is a dead end, so
+      // the third row follows whatever the header just mentioned.
       soonest
         ? ['ppr brief', color.dim('what is coming up')]
-        : ['ppr dump', color.dim('brain dump, cleaned up')],
+        : todos
+          ? ['ppr todos', color.dim('what you said you would do')]
+          : ['ppr dump', color.dim('brain dump, cleaned up')],
       ['ppr --help', color.dim('everything else')],
     ]),
   );

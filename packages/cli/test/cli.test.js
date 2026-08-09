@@ -924,6 +924,52 @@ test('a bare ppr says what ppr knows, and only when it knows something', async (
   });
 });
 
+test('an overview counts what is waiting, and names where to see it', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['+', 'shipped the importer']);
+    const quiet = await ppr(dir, []);
+    assert.doesNotMatch(quiet.stdout, /todo/, 'an empty list is not advertised');
+
+    await ppr(dir, ['todo', 'buy milk']);
+    await ppr(dir, ['todo', 'renew the passport']);
+    const { stdout } = await ppr(dir, []);
+    assert.match(stdout, /2 todos/);
+    // A count with no command under it is a dead end.
+    assert.match(stdout, /ppr todos/);
+
+    // A dated one belongs to the upcoming line and is not counted twice.
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    const dated = await ppr(dir, []);
+    assert.match(dated.stdout, /2 todos/);
+    assert.match(dated.stdout, /call the dentist/);
+  });
+});
+
+test('the brief says how much is waiting with no date on it', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    await ppr(dir, ['todo', 'buy milk']);
+
+    for (const args of [['brief'], ['brief', '--plain']]) {
+      const { stdout } = await ppr(dir, args);
+      assert.match(stdout, /call the dentist/, `${args.join(' ')} still counts down to the dated one`);
+      assert.match(stdout, /1 open todo — ppr todos/, `${args.join(' ')} names the rest`);
+    }
+
+    // The items are dated things, and a script filtering them on `.overdue`
+    // must not have to step over a sentence.
+    const items = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].text, 'call the dentist');
+
+    // Nothing waiting, nothing said.
+    await withVault(async (empty) => {
+      await ppr(empty, ['remind', 'tomorrow', 'call the dentist']);
+      assert.doesNotMatch((await ppr(empty, ['brief'])).stdout, /todo/);
+    });
+  });
+});
+
 test('piping still captures, because a pipe is deliberate', async () => {
   await withVault(async (dir) => {
     const { code } = await ppr(dir, [], { input: 'straight from a pipe\n' });

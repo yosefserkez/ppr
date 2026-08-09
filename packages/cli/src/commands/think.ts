@@ -85,6 +85,10 @@ export function briefCommand(): Command {
 "days" is negative when it is overdue: an unfinished reminder stays visible
 for a week after its day.
 
+A todo carries no day, so it is never an item here — the last line says how
+many are open and \`ppr todos\` is the list. Not in --json: that array is
+dated things only.
+
 --notify sends the soonest item to \`ppr-notify\` on your PATH and prints
 exactly what it printed before. Nothing upcoming sends nothing — a daily
 "nothing coming up" ping is how notifications stop being read.
@@ -101,6 +105,29 @@ with no flag at all:  ppr brief --plain | ppr-notify`,
         // stdout goes to the same place whether or not a banner was posted,
         // and the banner is built from the items rather than from the prose.
         const announce = flags.notify ? announceBrief : async () => {};
+
+        /**
+         * The dateless half, in one line.
+         *
+         * A brief is the calendar view and stays one: a todo carries no day,
+         * so it can never be an item here, and giving it a fake one to get it
+         * on the list is how a heads-up turns into a to-do list. But a
+         * morning summary that silently omits four things you said you would
+         * do is not a summary — so it says how many and names where they are,
+         * and stops.
+         *
+         * Never in `--json`, and not in the items a notification is built
+         * from: that array is dated things, and a script filtering it on
+         * `.overdue` should not have to step over a sentence.
+         */
+        const sayTodos = (afterItems: boolean): void => {
+          const open = vault.todos().filter((todo) => todo.days === undefined).length;
+          if (!open) return;
+          // Set apart from the countdowns, because it is a different claim:
+          // those are days, this is a number of things with no day at all.
+          if (afterItems) out('');
+          out(color.dim(`${open} open todo${open === 1 ? '' : 's'} — ppr todos`));
+        };
 
         if (flags.plain || g.json) {
           const items = vault.upcoming({ withinDays });
@@ -129,6 +156,7 @@ with no flag at all:  ppr brief --plain | ppr-notify`,
           } else {
             out(heuristicBrief(items.map(briefItem)));
           }
+          if (!g.json) sayTodos(items.length > 0);
           return void (await announce(items));
         }
 
@@ -141,6 +169,7 @@ with no flag at all:  ppr brief --plain | ppr-notify`,
             errline(color.dim('The model returned nothing usable — these are the dates themselves.'));
           }
         }
+        sayTodos(result.items.length > 0);
         await announce(result.items);
       }),
     );
