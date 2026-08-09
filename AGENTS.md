@@ -211,6 +211,15 @@ under `FACTS_IN_PROMPT`, rank lexically above it, and let dates be arithmetic.
 The intelligence is spent on writing the store, not on searching it, which is
 why the store stays legible enough to fix by hand.
 
+Reconciliation asks how a candidate relates to what is already known, never to
+its siblings, so one run's candidates are collapsed by `factKey` before they
+are sent. That catches the same sentence twice — the case a backfill produces,
+because a fact said on Monday and again on Friday lands in two chunks of one
+run. **Known limit:** two candidates of one run that say the same thing in
+different words are only caught if the model says so on the next run, when one
+of them is `known`. Widening this means reconciling candidates against each
+other, which is a second model call per run for a case a re-run already fixes.
+
 `ppr context` is the point of the whole thing: ppr is the layer notes go into,
 and what it does with them is hand another tool a grounded snapshot. It runs no
 model, so it is instant and identical every time.
@@ -270,7 +279,9 @@ The store is a **projection**: delete `memory/` and `ppr memory learn --all`
 rebuilds it. That is the property to protect when changing anything here — it
 is what makes the layer trustworthy rather than a second place your data lives.
 `.ppr/state.json` holds the high-water mark (an entry *id*, not a timestamp —
-see L20) so a cron run reads only what is new.
+see L20) so a cron run reads only what is new. It means "everything before
+this has been read", so only a run that actually read the backlog may move it
+(L23).
 
 **Config.** Three layers, later wins: `DEFAULT_CONFIG` < `~/.config/ppr/config.json`
 < `<vault>/.ppr/config.json`. Writes persist only the delta. Optional keys with no
@@ -349,7 +360,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 209 tests. No network. No TTY required.
+pnpm test        # 213 tests. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -560,6 +571,16 @@ its script by absolute path — and for the same reason `--vault` is written out
 rather than inherited from a cwd that will not exist. Related: the uid fallback
 that guessed `501` is gone; `gui/501` is the first account on most Macs and
 somebody else's on the rest, and a wrong guess is worse than a clear failure.
+
+**L23. A window is not the backlog.** `ppr memory learn <ref>` and
+`--since` read entries that can start *after* the high-water mark, and both
+then advanced it to the newest thing they had read — declaring everything in
+the gap done. Nothing offers those entries to a model again, because `learn`
+is incremental by default, so they were gone silently and permanently. The
+mark is a claim about *everything before* a point, and only a run that read
+from the mark (or `--all`) is entitled to make it. This is L21 with a
+different trigger, and the same asymmetry decides it: a mark left behind
+costs a re-scan that reconciliation absorbs, a mark moved wrongly costs words.
 
 **L19. An invisible exit is not an exit.** `ppr write` ended only on Ctrl-D,
 announced once in dim text that scrolled away, with no marker showing you were
