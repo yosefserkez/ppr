@@ -270,6 +270,37 @@ of the pair is `known`.
 and what it does with them is hand another tool a grounded snapshot. It runs no
 model, so it is instant and identical every time.
 
+### The thread walk
+
+`core/src/thread.ts` answers "where had I got to" by walking the graph that is
+already there. It stores nothing, adds no frontmatter, and asks no model
+whether two notes are one thought — linking or tagging them is how the user
+already said so, and inventing that claim is how a recall tool starts lying.
+
+The whole design is the failure mode it is written against: once "related to
+something related to something" chains, every entry is on every thread and the
+feature says nothing. So the walk is bounded by **strength**, not by taste.
+Seeds start at 1, a wikilink multiplies by 0.7, relatedness by 0.35, and
+anything under 0.2 is dropped — which works out as four steps along links, one
+step across tags, and no chaining of tag hops at all. Tags therefore *widen* a
+thread and never lengthen it, which is the difference between "the same
+thought" and "the same subject area". The floor under a weak edge is a
+`related()` score of 4, meaning two signals rather than one, for the same
+reason `mentionScore` counts whole words and wants two of them: "redis"
+contains "is", and one shared tag in a vault where everything is `#work` is a
+coincidence. **High-bar and boring beats clever** — that is the lesson the
+mentions fix already paid for, and it applies here unchanged.
+
+Two numbers are policy rather than mechanism. Search seeds are kept only while
+they score within a quarter of the best hit, because a seed is where a walk
+*starts* and a bad one costs everything downstream. And `continuesThread` — the
+line a capture prints unasked — doubles the weak floor to 8 and wants a third
+entry, because nobody asked for that line and a pair is a coincidence.
+
+Facts are gathered separately and never walked: state has no position in a
+timeline (I12). A *completed* reminder stays on the thread, because you did
+send the email and that is part of the story.
+
 ### Extending ppr
 
 ppr's outward surface is events out, `--json` in, markdown underneath (I13).
@@ -396,6 +427,7 @@ source of truth (I1), so the markdown is the address.
 | A new command or flag | `packages/cli/src/commands/` |
 | How something looks in a terminal | `packages/cli/src/render.ts` or `ui/` |
 | A decision about "what can I see next" | `core/src/navigate.ts` (it is a graph question) |
+| How far one line of thought reaches: the walk, its bounds, its silences | `core/src/thread.ts` |
 | Something that can be wrong with a user's setup | `cli/src/setup/checks.ts` — one registry, rendered by both `doctor` and `setup` |
 | Terminal input, raw mode, escape codes | `packages/cli/src/ui/screen.ts`, nowhere else |
 
@@ -470,6 +502,14 @@ are the two ways in. The one asymmetry is deliberate: a *fact* whose date has
 passed drops out (the day happened), while an unfinished *timeline* item stays
 for a seven-day grace window with negative `days`, because a missed intention is
 exactly the thing worth being told about.
+
+**Thread.** Not a thing. There is no thread file, no thread id, and no
+frontmatter key — a thread is a *query* over the links and tags that are
+already in the entries, assembled on demand and thrown away (see §4, the thread
+walk). That is deliberate and worth keeping: the moment a thread is stored, two
+things own the same relationship and one of them is wrong by Friday. The only
+structure it adds is in the reading — a `reason` per entry, and gaps computed
+from `created` — and both are derived every time.
 
 The store is a **projection**: delete `memory/` and `ppr memory learn --all`
 rebuilds it. That is the property to protect when changing anything here — it
@@ -613,7 +653,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 315 tests, plugins included. No network. No TTY required.
+pnpm test        # 334 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -632,6 +672,9 @@ pnpm build
   phrases that must *not* be read as one. Pure, table-driven, fixed `now`.
 - `core/test/links.test.js` — auto-linking known names without touching code,
   URLs, or a link that is already there.
+- `core/test/thread.test.js` — which entries carry one line of thought: a
+  linked chain followed, a shared word refused, a walk that stops before it
+  has eaten the vault, and the arithmetic of the silences in between.
 - `core/test/providers.test.js` — provider wire formats against a local HTTP stub.
 - `core/test/search.test.js` — ranking and config paths.
 - `core/test/audio.test.js` — silence detection on synthesised WAVs (L14).
@@ -696,18 +739,22 @@ the second does. A vendor prefix is part of a model's name there, never a way
 to switch provider — that is `ai.provider`, and `--model` does not touch it.
 
 Dimensions: decomposition, precision, recall, provenance, dates,
-reconciliation, retrieval, reminders, brief. A case asserts on *meaning* — a
+reconciliation, retrieval, reminders, brief, thread. A case asserts on *meaning* — a
 set of words that must appear in some fact — and every case also says what
 would be wrong, because a suite that only measures recall rewards a model that
 keeps everything.
 
-Three case shapes, for the three doors a model comes through. `rounds` (plus
+Four case shapes, for the four doors a model comes through. `rounds` (plus
 `ask`) drive `learn()` and `ask()` on one vault. `remind` drives
 `reminderFrom()` on a line the deterministic reader in `remind.ts` gives up on
 — the only lines where a model is consulted at all — and `brief` drives
 `brief()` over items whose dates were settled by arithmetic first, so what it
-measures is the wording. Both pin "today" through the vault's `Clock`: an
-assertion about a date is worth nothing if it means something else tomorrow.
+measures is the wording. `thread` drives `threadRecap()` over a walk that was
+also settled first, so what it measures is whether the story ends where the
+thinking left off rather than summarising the pile. All three pin "today"
+through the vault's `Clock`: an assertion about a date is worth nothing if it
+means something else tomorrow, and "picked it up again after six months" is
+unsayable without one.
 
 `recall` is the one that carries a realistic load: eight entries, deliberately
 past `EXTRACT_CHUNK_CHARS` so the batch spans more than one extraction call.

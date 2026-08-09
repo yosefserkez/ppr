@@ -320,10 +320,77 @@ fragment.
 | Command                | What it does                                        |
 | ---------------------- | --------------------------------------------------- |
 | `ppr recap --since 7d` | Standup, weekly review, or narrative.               |
+| `ppr thread <query>`   | Pick up a line of thought where you left it.        |
 | `ppr ask <question>`   | An answer grounded in your entries, with citations. |
 | `ppr brief`            | What is coming up, from the dates ppr already holds.|
 | `ppr context [query]`  | Everything ppr knows, for another tool to reason with. |
 
+
+### Threads
+
+`recap` is a window and `search` is a list of matches. Neither answers *where
+had I got to* — which is the only question you have when a business idea comes
+back after eight months, or a concept turns up for the fourth time in three
+years.
+
+```
+$ ppr thread coffee subscription
+Mon 06 Oct 2025  log     dw2hn2  Coffee subscription idea                   matched
+Wed 08 Oct 2025  log     teewq6  What the beans actually cost               matched
+Tue 21 Oct 2025  note    6ry46j  Talked to a roaster                        matched
+Tue 04 Nov 2025  note    4btg09  Unit economics, roughly                    linked
+Wed 19 Nov 2025  log     3gs5tj  Shelving the coffee idea                   linked
+
+                 ·  6 months later
+
+Thu 14 May 2026  log     h52a51  Back to the coffee idea                    linked
+Thu 21 May 2026  note    mvz1k3  Subscription versus one-off boxes          matched
+Tue 26 May 2026  remind  qbz9q4  email the roaster about wholesale pricing  linked
+Tue 02 Jun 2026  note    da7pvk  Where the coffee idea stands               matched
+
+What you concluded
+  2zrjt1  The coffee idea only works above 200 subscribers.
+```
+
+Nothing here is stored and no model decides what belongs. A thread is a walk
+over the graph you already wrote: an id, `latest`, or `^2` names one entry and
+anything else is searched for, and from those seeds ppr follows `[[wikilinks]]`
+a long way and shared tags and titles exactly one step. A link is something you
+did on purpose; a tag two entries have in common is a coincidence, and a thread
+built out of coincidences would be the whole vault by Thursday.
+
+The silences are arithmetic — six times the thread's own rhythm, never under a
+fortnight, always over two months — so the offline view tells you it was put
+down in November and picked up in May. With a model configured, the story comes
+first and the timeline sits under it, because a summary you cannot check
+against the entries is not worth much:
+
+```
+$ ppr thread coffee subscription
+This thread is about whether a coffee subscription for small studios can work.
+…
+It sat untouched from 19 Nov 2025 until 14 May 2026, when two studios asked
+where I got the beans. [h52a51] … The open question is still whether referrals
+get me to 200 without paid acquisition; the last direction was checking the
+roaster's smallest white-label run.
+
+— then the timeline
+…
+```
+
+`--no-summary` keeps the timeline alone, `--plain` also keeps the browser shut,
+and `--json` gives `{ query, seededBy, entries, facts, gaps }`. With no model at
+all you get the timeline and lose nothing but the prose.
+
+And because the moment worth knowing a thought has come back is the moment you
+write it down, the third entry on something says so — once, on stderr, and only
+for a link it actually resolved:
+
+```
+$ ppr "asked the roaster what their smallest white-label run really is"
+✓ 285kys asked the roaster what their smallest white-label run really is
+  ↳ continues a thread (9 entries) — ppr thread 285kys
+```
 
 ## Memory
 

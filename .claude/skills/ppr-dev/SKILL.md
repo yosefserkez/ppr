@@ -31,6 +31,12 @@ is true — one-line facts distilled out of the journal, outside the timeline an
 rebuildable from it (I12). Facts are ordinary markdown entries with
 `kind: memory`; everything the layer adds rides in `Entry.extra`.
 
+A third view crosses both and stores nothing: `ppr thread` walks the links and
+tags already in the entries to gather one line of thought, oldest first, with
+the facts it concluded underneath (`core/src/thread.ts`). There is no thread
+file and no thread id — the moment a thread is stored, two things own the same
+relationship.
+
 A `kind: reminder` is an intention and lives in the *first* tree: you did say it
 when you said it. What it shares with a fact is only `date:`/`recurs:` in
 `extra`, which is what `ppr brief` counts down — dated anything, including a
@@ -69,6 +75,7 @@ Load the reference for the task at hand:
 
 | Task | Reference |
 | --- | --- |
+| Change how far a thread reaches, or what a graph walk admits | `references/thread.md` |
 | Add or change a command, flag, or output format | `references/add-command.md` |
 | Add an AI provider or transcription backend | `references/add-provider.md` |
 | Add or change an interactive terminal view | `references/interactive-ui.md` |
