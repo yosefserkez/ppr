@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
+  countdown,
   formatDay,
   MEMORY_KIND,
   plainText,
@@ -9,6 +10,7 @@ import {
   truncate,
   type Entry,
   type ListQuery,
+  type Todo,
   type Vault,
 } from '@ppr/core';
 import { filterFlags, globals, toQuery, withVault, type FilterFlags } from '../context.js';
@@ -84,6 +86,78 @@ export function windowCommands(): Command[] {
     build('week', 'this week', 'everything logged this week'),
   ];
 }
+
+/**
+ * `ppr todos` — everything you said you would do.
+ *
+ * The surface a dateless intention was missing. `ppr brief` is the calendar
+ * question and stays one: it reads dates, and a todo has none, so before this
+ * existed a reminder without a day had nowhere at all to appear and the capture
+ * path could not honestly keep one.
+ *
+ * No model and no network — `Vault.todos()` is arithmetic over frontmatter — so
+ * it is instant, offline, and the same list twice.
+ */
+export function todosCommand(): Command {
+  return new Command('todos')
+    .description('open reminders: overdue first, then dated, then the undated ones')
+    .option('-a, --all', 'include the ones already done')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr todo buy milk           add one
+  ppr todos                   what is open
+  ppr todos --all             including what you have finished
+  ppr done <ref>              tick one off
+  ppr todos -q | wc -l        it is a list, so it pipes
+
+--json gives one object per todo, in the same order: the usual entry fields
+plus "text", "overdue", "done", and "date"/"days" when it carries a day.
+"days" is negative when it is overdue, and a todo stays until it is done —
+this is a list, not a heads-up, so nothing ages out of it the way it does
+from \`ppr brief\`.`,
+    )
+    .action(async (flags: { all?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        const todos = vault.todos(flags.all ? { includeDone: true } : {});
+        const g = globals(self);
+
+        if (g.json) {
+          return json(
+            todos.map((todo) => ({
+              ...entryJson(todo.entry),
+              text: todo.text,
+              ...(todo.date ? { date: todo.date, days: todo.days } : {}),
+              overdue: todo.overdue,
+              done: todo.done,
+            })),
+          );
+        }
+        if (g.quiet) return out(todos.map((t) => t.entry.id).join('\n'));
+        if (!todos.length) {
+          return void out(color.dim(flags.all ? 'Nothing here yet.' : 'Nothing to do. `ppr todo <text>` adds one.'));
+        }
+
+        // Padded on the visible text and coloured afterwards: a width measured
+        // on a string that already holds escape codes is not a width (L3).
+        const width = todos.reduce((w, t) => Math.max(w, when(t).length), 0);
+        for (const todo of todos) {
+          out(
+            `${mark(todo)} ${color.dim(shortId(todo.entry.id))}  ${color.dim(when(todo).padEnd(width))}  ${text(todo)}`,
+          );
+        }
+      }),
+    );
+}
+
+const when = (todo: Todo): string => (todo.days === undefined ? '' : countdown(todo.days));
+
+const mark = (todo: Todo): string =>
+  todo.done ? color.green('✓') : todo.overdue ? color.yellow('!') : ' ';
+
+const text = (todo: Todo): string =>
+  todo.done ? color.dim(todo.text) : truncate(todo.text, 68);
 
 /** `ppr search` — lexical, instant, offline. */
 export function searchCommand(): Command {

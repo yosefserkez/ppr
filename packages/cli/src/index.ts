@@ -16,6 +16,7 @@ import {
   quickLog,
   remindCommand,
   removeCommand,
+  todoCommand,
   voiceCommand,
   writeCommand,
 } from './commands/capture.js';
@@ -31,6 +32,7 @@ import {
   statsCommand,
   tagsCommand,
   textCommand,
+  todosCommand,
   windowCommands,
 } from './commands/browse.js';
 import { askCommand, briefCommand, contextCommand, memoryCommand, recapCommand } from './commands/think.js';
@@ -78,12 +80,14 @@ program.addCommand(clipCommand());
 program.addCommand(voiceCommand());
 program.addCommand(appendCommand());
 program.addCommand(remindCommand());
+program.addCommand(todoCommand());
 program.addCommand(doneCommand());
 
 // Browse
 program.addCommand(listCommand());
 program.addCommand(browseCommand());
 for (const cmd of windowCommands()) program.addCommand(cmd);
+program.addCommand(todosCommand());
 program.addCommand(searchCommand());
 program.addCommand(showCommand());
 program.addCommand(editCommand());

@@ -44,7 +44,7 @@ import { filterEntries, searchEntries } from './search.js';
 import { lenses } from './navigate.js';
 import { systemClock } from './ports.js';
 import { truncate, wordCount } from './util/text.js';
-import { formatDay } from './util/time.js';
+import { dayKey, formatDay } from './util/time.js';
 import { buildClipEntry, buildDumpEntry } from './capture.js';
 import * as tasks from './ai/tasks.js';
 
@@ -85,6 +85,26 @@ export interface Upcoming extends Occurrence {
 }
 
 /**
+ * An intention, seen from the list rather than from the calendar.
+ *
+ * `upcoming()` answers "what is nearly due" and is therefore about dates; this
+ * answers "what have I said I would do", which is the same entries asked a
+ * different question — including the ones carrying no day at all, which no
+ * amount of arithmetic will ever surface.
+ */
+export interface Todo {
+  entry: Entry;
+  /** One line saying what it is: a reminder's title *is* its text. */
+  text: string;
+  /** The day it next falls on, `YYYY-MM-DD`. Absent on a plain todo. */
+  date?: string;
+  /** Whole days from today; 0 is today, negative is overdue. Absent when undated. */
+  days?: number;
+  overdue: boolean;
+  done: boolean;
+}
+
+/**
  * How long an intention stays visible after its day has gone.
  *
  * A reminder nobody completed is the one dated thing whose *past* matters: the
@@ -110,6 +130,22 @@ const FACTS_IN_PROMPT = 150;
 const EXTRACT_CHUNK_CHARS = 3000;
 
 const mergeIds = (...lists: string[][]): string[] => [...new Set(lists.flat())].filter(Boolean);
+
+/** Which band of `ppr todos` an intention falls in. See `Vault.todos()`. */
+const todoRank = (todo: Todo): number =>
+  todo.done ? 3 : todo.days === undefined ? 2 : todo.days < 0 ? 0 : 1;
+
+/**
+ * The order inside one band. Dated ones go by the day itself — which sorts
+ * most-overdue-first and soonest-first with the same comparison, because both
+ * are just "the smaller number of days". Undated ones go oldest first; ones
+ * already dealt with go newest first, since a finished list is read as history.
+ */
+function withinRank(a: Todo, b: Todo): number {
+  if (a.days !== undefined && b.days !== undefined && a.days !== b.days) return a.days - b.days;
+  const older = a.entry.id < b.entry.id ? -1 : 1;
+  return todoRank(a) === 3 ? -older : older;
+}
 
 /** Groups entries into prompt-sized batches, keeping each entry whole. */
 function chunkEntries(entries: Entry[]): Entry[][] {
@@ -365,21 +401,89 @@ export class Vault {
   /**
    * Records something to be reminded about. An ordinary entry with a date on
    * it, so `ppr ls` shows it the day you wrote it and `ppr brief` counts down.
+   *
+   * The day is optional, and an intention without one is a todo: same kind,
+   * same file, same `complete()`, absent from `brief` because there is nothing
+   * to count down to. One method rather than two, because "buy milk" and "buy
+   * milk on Friday" are the same act with a field filled in — and a second
+   * writer would be a second answer to what a reminder's frontmatter looks
+   * like. A day that was *given* and cannot be read is still an error: the
+   * caller said which day it meant.
    */
   async addReminder(
     text: string,
-    when: { date: string; recurs?: FactRecurrence },
+    when: { date?: string; recurs?: FactRecurrence } = {},
   ): Promise<Entry> {
     const line = text.trim();
     if (!line) throw new PprError('EINVALID', 'Nothing to be reminded about');
-    const date = parseFactDate(when.date);
-    if (!date) throw new PprError('EINVALID', `Not a calendar day: ${when.date}`);
+    const date = when.date ? parseFactDate(when.date) : undefined;
+    if (when.date && !date) throw new PprError('EINVALID', `Not a calendar day: ${when.date}`);
     return this.add({
       body: line,
       kind: REMINDER_KIND,
       title: truncate(line, 70),
-      extra: reminderExtra({ date, ...(when.recurs ? { recurs: when.recurs } : {}) }),
+      extra: reminderExtra({ ...(date ? { date, ...(when.recurs ? { recurs: when.recurs } : {}) } : {}) }),
     });
+  }
+
+  /**
+   * Every intention, in the order you would work through them.
+   *
+   * `kind: reminder` and nothing else — deliberately narrower than
+   * `upcoming()`, which is about *dated anything* and rightly picks up a
+   * birthday and a note somebody typed `date:` into. A todo list of other
+   * people's birthdays would be a strange list, and this one has to be a list
+   * you can finish.
+   *
+   * Overdue first and most overdue at the top, because a thing that did not
+   * happen is the thing worth deciding about; then the dated ones soonest
+   * first; then the undated, oldest first, since the one that has sat longest
+   * is the one being avoided. Ties break on id — time-prefixed and monotonic
+   * (L2), so that is creation order and it is the same order every run.
+   *
+   * No model, no network, no dates parsed out of prose: this is arithmetic
+   * over frontmatter, so it is instant and identical every time.
+   */
+  todos(opts: { includeDone?: boolean; now?: Date } = {}): Todo[] {
+    const now = opts.now ?? this.clock.now();
+    const rows: Todo[] = [];
+
+    for (const entry of this.catalog.timeline()) {
+      if (entry.kind !== REMINDER_KIND) continue;
+      const done = entry.extra.status === 'done';
+      if (done && !opts.includeDone) continue;
+
+      const date = parseFactDate(entry.extra.date);
+      // The same `nextOccurrence` the brief runs on, so a countdown printed
+      // here and one printed there cannot disagree. The grace window is
+      // effectively infinite because a todo list is not a heads-up: a brief
+      // stops nagging after a week, a list of things you said you would do
+      // keeps them until you say otherwise.
+      const occurrence = date
+        ? nextOccurrence(
+            {
+              id: entry.id,
+              text: entry.title,
+              date,
+              from: [],
+              entry,
+              ...(entry.extra.recurs === 'yearly' ? { recurs: 'yearly' as const } : {}),
+            },
+            now,
+            { graceDays: Number.MAX_SAFE_INTEGER },
+          )
+        : null;
+
+      rows.push({
+        entry,
+        text: entry.title,
+        ...(occurrence ? { date: dayKey(occurrence.date), days: occurrence.days } : {}),
+        overdue: Boolean(occurrence && occurrence.days < 0),
+        done,
+      });
+    }
+
+    return rows.sort((a, b) => todoRank(a) - todoRank(b) || withinRank(a, b));
   }
 
   /**

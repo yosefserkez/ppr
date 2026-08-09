@@ -148,20 +148,23 @@ export async function quickLog(
   body: string,
   opts: { kind?: string } = {},
 ): Promise<Entry> {
+  if (!opts.kind && TODO_PREFIX.test(body)) return todo(vault, cmd, body);
   if (!opts.kind && REMIND_PREFIX.test(body)) return remind(vault, cmd, body);
   const entry = await vault.add({ body, kind: opts.kind ?? vault.config.capture.defaultKind });
   return finish(vault, entry, cmd, { follow: false });
 }
 
 /**
- * The one thing a quick capture is allowed to become other than a log.
+ * The two things a quick capture is allowed to become other than a log.
  *
- * A fixed prefix, never a judgement about what the text is about. "remind me"
- * is a sentence nobody writes by accident and nobody writes meaning anything
- * else — which is the only kind of signal that may change what a command does
- * (L17/I11). Everything past those two words is still just words.
+ * Fixed prefixes, never a judgement about what the text is about. "remind me"
+ * and a leading "todo:" are sentences nobody writes by accident and nobody
+ * writes meaning anything else — which is the only kind of signal that may
+ * change what a command does (L17/I11). Everything past those words is still
+ * just words.
  */
 const REMIND_PREFIX = /^remind(\s+me)?\b/i;
+const TODO_PREFIX = /^todo:?\s/i;
 
 /**
  * `ppr remind` — a thing to do, on a day.
@@ -268,6 +271,68 @@ makes it the default for every reminder, quoted ones too.`,
           );
         }
         await remind(vault, self, body, flags);
+      }),
+    );
+}
+
+/**
+ * `ppr todo` — a thing to do, with no day on it.
+ *
+ * The single implementation, so `ppr todo buy milk` and `ppr "todo: buy milk"`
+ * cannot answer differently (L18). Nothing is read out of the words: a todo is
+ * dateless by definition, and a command that quietly found "friday" in "call
+ * dad friday about the boat" would be inventing a deadline nobody set. `--at`
+ * is how you say you meant one — and then this *is* `ppr remind`, so it hands
+ * over rather than growing a second copy of the reminder path.
+ */
+export async function todo(
+  vault: Vault,
+  cmd: Command,
+  body: string,
+  flags: { at?: string; print?: boolean } = {},
+): Promise<Entry> {
+  if (flags.at) return remind(vault, cmd, body.replace(TODO_PREFIX, ''), flags);
+
+  const text = body.replace(TODO_PREFIX, '').trim();
+  if (!text) {
+    throw new PprError('EINVALID', 'Nothing to do', 'Try: ppr todo buy milk');
+  }
+  const entry = await vault.addReminder(text);
+  return finish(vault, entry, cmd, { follow: false, ...(flags.print ? { print: true } : {}) });
+}
+
+/** `ppr todo` — the command form of the same thing. */
+export function todoCommand(): Command {
+  return new Command('todo')
+    .description('something to do, with no day on it')
+    .argument('[text...]', 'the thing to do, e.g. `buy milk`')
+    .option('--at <when>', 'give it a day after all — the same as `ppr remind`')
+    .option('-p, --print', 'print the saved entry')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr todo buy milk
+  ppr todo chase the invoice --at friday      the same as \`ppr remind\`
+  ppr "todo: buy milk"                        the same thing, quoted
+  ppr todos                                   what is open
+  ppr done <ref>                              when it is dealt with
+
+A todo is a reminder with no date: same kind, same file, same \`ppr done\`. It
+stays out of \`ppr brief\`, because there is nothing to count down to — \`ppr
+todos\` is where it lives, and \`ppr brief\` says how many are waiting.
+
+No date is read out of the words. If you meant one, --at says so.`,
+    )
+    .action(async (text: string[], flags: { at?: string; print?: boolean }, self: Command) =>
+      withVault(self, async (vault) => {
+        // Not `resolveText` alone: with nothing to work from it opens $EDITOR,
+        // and a bare `ppr todo` is a person asking how the command works.
+        const body = text.length || hasStdin() ? await resolveText(text) : '';
+        if (!body) {
+          throw new PprError('EINVALID', 'Nothing to do', 'Try: ppr todo buy milk');
+        }
+        await todo(vault, self, body, flags);
       }),
     );
 }

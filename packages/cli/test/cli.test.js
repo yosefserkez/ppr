@@ -1090,6 +1090,113 @@ test('the quoted and the explicit ways to set a reminder are one path', async ()
   });
 });
 
+test('a todo is a reminder with no day on it, and it has somewhere to be', async () => {
+  await withVault(async (dir) => {
+    const { code, stderr } = await ppr(dir, ['todo', 'buy milk']);
+    assert.equal(code, 0);
+    assert.match(stderr, /buy milk/);
+
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    assert.equal(entry.kind, 'reminder', 'the same kind: a todo is a reminder without the day');
+    // No `date:` at all rather than an empty one — absence is the shape, and
+    // it is what keeps a todo out of every dated view (I3's `extra` stays bare).
+    assert.equal(entry.extra, undefined);
+    assert.doesNotMatch(await readFile(join(dir, entry.path), 'utf8'), /^date:/m);
+
+    // Nothing to count down to, so nothing in the calendar view — which is
+    // exactly why `ppr todos` had to exist before this could be stored.
+    assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 0);
+
+    const [todo] = JSON.parse((await ppr(dir, ['todos', '--json'])).stdout);
+    assert.equal(todo.text, 'buy milk');
+    assert.equal(todo.overdue, false);
+    assert.equal(todo.done, false);
+    assert.equal(todo.date, undefined, 'no day means no day, not a guessed one');
+    assert.equal((await ppr(dir, ['todos', '-q'])).stdout.trim(), entry.id);
+  });
+});
+
+test('the quoted and the explicit ways to add a todo are one path', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['todo', 'buy milk']);
+    await ppr(dir, ['todo: buy milk']);
+
+    const [second, first] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+    for (const field of ['body', 'kind', 'title']) {
+      assert.equal(second[field], first[field], `${field} differs between the two paths`);
+    }
+    // `--at` makes it a reminder, because that is all a reminder is.
+    await ppr(dir, ['todo', 'chase the invoice', '--at', 'tomorrow']);
+    const [dated] = JSON.parse((await ppr(dir, ['brief', '--json'])).stdout);
+    assert.equal(dated.text, 'chase the invoice');
+    assert.equal(dated.days, 1);
+  });
+});
+
+test('todos are ordered the way you would work through them', async () => {
+  await withVault(async (dir) => {
+    // Written oldest first, so the undated pair also proves it is age and not
+    // insertion order that decides — ids are monotonic (L2), so they can be
+    // compared.
+    await ppr(dir, ['todo', 'buy milk']);
+    await ppr(dir, ['todo', 'renew the passport']);
+    await ppr(dir, ['remind', 'in 3 days', 'water the plants']);
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    await ppr(dir, ['remind', 'tomorrow', 'file the expenses']);
+
+    // Two overdue, by hand: the date is one line of frontmatter, which is the
+    // only interface there is.
+    const byTitle = Object.fromEntries(
+      JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).map((e) => [e.title, e]),
+    );
+    for (const [title, days] of [['call the dentist', -2], ['file the expenses', -9]]) {
+      const path = join(dir, byTitle[title].path);
+      const raw = await readFile(path, 'utf8');
+      await writeFile(path, raw.replace(/^date: .*$/m, `date: ${dayFromNow(days)}`));
+    }
+
+    const todos = JSON.parse((await ppr(dir, ['todos', '--json'])).stdout);
+    assert.deepEqual(
+      todos.map((t) => t.text),
+      [
+        // Most overdue first: the one that has been waiting longest to be
+        // decided about.
+        'file the expenses',
+        'call the dentist',
+        // Then dated, soonest first.
+        'water the plants',
+        // Then undated, oldest first — the one being avoided is at the top.
+        'buy milk',
+        'renew the passport',
+      ],
+    );
+    assert.deepEqual(todos.map((t) => t.overdue), [true, true, false, false, false]);
+    assert.equal(todos[0].days, -9);
+    // A fortnight late is still on the list. `ppr brief` forgets after a week
+    // because it is a heads-up; this is a list, and a list you can finish is
+    // one nothing falls off.
+    assert.equal(JSON.parse((await ppr(dir, ['brief', '--json'])).stdout).length, 2);
+  });
+});
+
+test('done takes a todo off the list without deleting anything', async () => {
+  await withVault(async (dir) => {
+    await ppr(dir, ['todo', 'buy milk']);
+    const [entry] = JSON.parse((await ppr(dir, ['ls', '--json'])).stdout);
+
+    // A dateless intention completes like a dated one: there is something to
+    // stop showing, which is the whole test `complete()` applies.
+    const done = await ppr(dir, ['done', entry.id]);
+    assert.equal(done.code, 0);
+
+    assert.equal(JSON.parse((await ppr(dir, ['todos', '--json'])).stdout).length, 0);
+    const all = JSON.parse((await ppr(dir, ['todos', '--all', '--json'])).stdout);
+    assert.equal(all.length, 1);
+    assert.equal(all[0].done, true);
+    assert.match(await readFile(join(dir, entry.path), 'utf8'), /status: done/);
+  });
+});
+
 test('a reminder with no readable date is logged, and says so', async () => {
   await withVault(async (dir) => {
     const { code, stderr } = await ppr(dir, ['remind me about the passport thing']);
