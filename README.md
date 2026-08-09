@@ -641,7 +641,7 @@ engine against an in-memory store with no filesystem involved. See
 
 ```bash
 pnpm build       # both packages
-pnpm test        # 286 tests, plugins included, no network required
+pnpm test        # 287 tests, plugins included, no network required
 pnpm eval        # scores the memory pipeline against a real model (costs money)
 pnpm typecheck
 ```

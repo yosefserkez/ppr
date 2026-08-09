@@ -42,7 +42,15 @@ const DRAIN_MS = 2000;
 
 export interface ChildResult {
   ok: boolean;
-  /** One line, never a stack trace. Absent when it worked. */
+  /**
+   * The first line the child said on stderr, whether or not it succeeded.
+   *
+   * Success is not silence. A courier that cannot deliver — `ppr-notify` on
+   * Linux — is supposed to say so and exit 0, and swallowing that would leave
+   * the user told the copy was made. Every caller passes it on.
+   */
+  said?: string;
+  /** Why it failed, in one line. Absent when it worked. */
   hint?: string;
 }
 
@@ -87,9 +95,14 @@ export function runChild(command: string, opts: ChildOptions = {}): Promise<Chil
     child.on('error', (err: NodeJS.ErrnoException) =>
       done({ ok: false, hint: err.code === 'ENOENT' ? `${command} is not on your PATH` : err.message }),
     );
-    child.on('close', (code) =>
-      done(code === 0 ? { ok: true } : { ok: false, hint: firstLine(stderr) || `exited with ${code}` }),
-    );
+    child.on('close', (code) => {
+      const said = firstLine(stderr);
+      done({
+        ok: code === 0,
+        ...(said ? { said } : {}),
+        ...(code === 0 ? {} : { hint: said || `exited with ${code}` }),
+      });
+    });
     // A consumer that never reads its stdin is a normal consumer, not a broken
     // one — and an unhandled EPIPE here would take the whole command down.
     child.stdin?.on('error', () => {});

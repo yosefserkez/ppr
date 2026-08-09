@@ -1018,6 +1018,21 @@ test('--push with nothing installed explains itself and keeps the entry', async 
   });
 });
 
+test('a plugin that exits 0 with something to say is still heard', async () => {
+  await withVault(async (dir) => {
+    // The real shape of this is `ppr-notify` on Linux: one line on stderr and
+    // exit 0, because a courier that cannot deliver must not turn a capture
+    // red. Swallowing it would leave the user told a copy was made.
+    await writeScript(dir, 'ppr-reminders-push', 'echo "ppr-reminders-push: not on this platform" >&2');
+    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+
+    const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
+    assert.equal(code, 0);
+    assert.match(stderr, /not on this platform/);
+    assert.doesNotMatch(stderr, /→/, 'and no claim that the copy was made');
+  });
+});
+
 test('--notify sends the brief to whatever `ppr-notify` is', async () => {
   await withVault(async (dir) => {
     const seen = join(dir, 'notified.txt');

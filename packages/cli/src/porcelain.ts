@@ -98,7 +98,11 @@ export async function announceBrief(items: Upcoming[]): Promise<void> {
   if (!bin) return errline(color.dim(missing(NOTIFY_PLUGIN)));
 
   const result = await runChild(bin, { args: ['--title', banner.title], input: banner.body });
-  if (!result.ok) errline(color.dim(`No notification — ${result.hint}`));
+  // A plugin that succeeded but had something to say — "not on this platform",
+  // most often — has to be heard, or the user is told a banner was posted that
+  // never was.
+  if (result.said) errline(color.dim(result.said));
+  else if (!result.ok) errline(color.dim(`No notification — ${result.hint}`));
 }
 
 /** Why a reminder was or was not handed over. */
@@ -172,6 +176,10 @@ export async function handToReminders(
     input: `${JSON.stringify(eventJson(event))}\n`,
     env: { PPR_EVENT: event.event, PPR_VAULT: event.vault },
   });
+  // Whatever the plugin said, it said with its own name on the front, so it
+  // stands on its own — that is the line the user needs when the copy did not
+  // happen and the exit code was 0 anyway.
+  if (result.said) return errline(color.dim(`  ${result.said}`));
   errline(
     result.ok
       ? color.dim(`  → ${PUSH_PLUGIN}`)

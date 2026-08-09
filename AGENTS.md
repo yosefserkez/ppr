@@ -532,7 +532,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 286 tests, plugins included. No network. No TTY required.
+pnpm test        # 287 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```

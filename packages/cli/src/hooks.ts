@@ -89,7 +89,10 @@ export function hookRunner(hooks: Hooks): ((event: VaultEvent) => void) | undefi
       }).then((result) => {
         // One line, on stderr, and never an exit code: the entry is written
         // and a courier that tripped is not the user's problem to solve now.
-        if (!result.ok) errline(color.dim(`hook ${event.event}: ${result.hint}`));
+        // Whatever it said is passed on whether or not it failed — a hook that
+        // exits 0 saying "not on this platform" is reporting, not succeeding.
+        const line = result.said ?? result.hint;
+        if (line) errline(color.dim(`hook ${event.event}: ${line}`));
       });
     }
   };
