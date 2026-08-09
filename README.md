@@ -10,6 +10,7 @@ cat scratch.txt | ppr dump
 ppr clip https://example.com/post
 ppr search deploy --since 30d
 ppr ask "why did we drop redis?"
+ppr context "redis" | claude -p "what should we try next?"
 vim $(ppr path latest)
 ```
 
@@ -233,9 +234,77 @@ fragment.
 | ---------------------- | --------------------------------------------------- |
 | `ppr recap --since 7d` | Standup, weekly review, or narrative.               |
 | `ppr ask <question>`   | An answer grounded in your entries, with citations. |
-| `ppr memory learn`     | Pulls durable facts out and keeps them.             |
+| `ppr brief`            | What is coming up, from the dates ppr already holds.|
+| `ppr context [query]`  | Everything ppr knows, for another tool to reason with. |
 
 
+## Memory
+
+`recap` looks backwards at what happened. Memory holds what is *true*: one-line
+facts, kept apart from the journal because "Emily's birthday is 20 October" did
+not happen on the afternoon it was written down.
+
+```bash
+ppr memory learn        # read what is new and fold it in
+ppr memory ls           # everything ppr thinks it knows
+ppr memory why <ref>    # the entries a fact came from
+ppr memory review       # settle facts that disagree
+ppr memory add "..."    # a fact by hand — learn never overwrites it
+```
+
+`learn` is incremental and safe on a timer: it keeps a high-water mark, so a
+nightly run reads only what was written since the last one. It never settles a
+contradiction. Two facts that disagree are both kept and flagged, and
+`ppr memory review` is where you choose — a model deciding which of your facts
+is true is not a feature.
+
+Facts are markdown files in `memory/`, one per fact, editable in vim like
+everything else. The store is a projection rather than a second place your data
+lives: **delete `memory/` and `ppr memory learn --all` rebuilds it.**
+
+Facts stay out of `ppr ls`, `recap`, and `search`, because state does not belong
+in a timeline. `ppr search emily -k memory` looks in them, and a search that
+would have matched a fact says so.
+
+### What is coming up
+
+`ppr brief` is the forward-looking half: facts carrying a date, counted down.
+
+```
+$ ppr brief
+Emily's birthday is on 20 October, 12 days away — nothing about a present yet.
+```
+
+Which facts are due is arithmetic, so `ppr brief --plain` works with no model
+configured at all. The model only writes the sentence.
+
+### Handing it to something else
+
+`ppr context` is the point of the whole layer. ppr is where notes go *in*; what
+it does with them is hand another tool a grounded snapshot. No model runs, so it
+is instant and identical every time — which is what makes it safe to staple onto
+someone else's prompt.
+
+```bash
+ppr context "gift for emily" | claude -p "help me pick something"
+ppr context --json | jq .facts
+```
+
+### On a timer
+
+```bash
+ppr schedule add learn --at 03:00   # launchd or cron, whichever you have
+ppr schedule add brief --at 08:00
+ppr schedule ls
+```
+
+ppr does not run in the background and will not start; `schedule` writes the
+config for the scheduler your machine already has, and prints the crontab line
+if it cannot install one.
+
+Only `learn` needs a model. `ppr ai test` sends one prompt end to end and says
+whether yours answers — and whether it answers in JSON, which is what every ppr
+task actually asks for. Everything else on this page works offline.
 
 
 ## Setup and diagnosis
@@ -270,7 +339,7 @@ appear; choose a hosted backend and an API-key check appears.
 
 ```bash
 ppr ai setup     # pick a backend, keyboard or typed
-ppr ai test      # one prompt, end to end
+ppr ai test      # one prompt end to end: does it answer, and answer in JSON
 ppr ai status
 ppr ai list      # every backend, model and transcription
 ```
@@ -388,7 +457,9 @@ journal.
 ```
 ~/ppr/
   entries/2026/07/2026-07-27-1432-rolled-back-the-deploy-x7k2.md
+  memory/emilys-birthday-is-20-october-k4p9.md
   .ppr/config.json
+  .ppr/state.json  # where `memory learn` left off
   .ppr/cache/      # disposable, gitignored
 ```
 
@@ -435,7 +506,8 @@ engine against an in-memory store with no filesystem involved. See
 
 ```bash
 pnpm build       # both packages
-pnpm test        # 61 tests, no network required
+pnpm test        # 209 tests, no network required
+pnpm eval        # scores the memory pipeline against a real model (costs money)
 pnpm typecheck
 ```
 
