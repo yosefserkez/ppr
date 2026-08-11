@@ -4,10 +4,21 @@ import { ENTRIES_DIR, parseEntry } from './entry.js';
 import { MEMORY_DIR } from './memory.js';
 import { ambiguous, notFound } from './errors.js';
 import { isId } from './util/id.js';
+import { byCreatedDesc } from './util/order.js';
 import { slugify } from './util/text.js';
 
 const CACHE_PATH = '.ppr/cache/index.json';
-const CACHE_VERSION = 1;
+/**
+ * Bumped whenever a cached `Entry` stops meaning what an older ppr wrote.
+ *
+ * A cache entry now carries *identity* — the `raw` block of a file ppr could
+ * not read, and an id derived from the path for a file that has none — so a
+ * warm cache from before that change hands back entries this code would never
+ * have produced, and deleting it would change behaviour rather than only
+ * speed. That is exactly the thing I1 forbids, so a shape change here is a
+ * version bump; `readCache` then discards the old file and re-parses.
+ */
+const CACHE_VERSION = 2;
 
 /** The two trees a vault holds: what happened, and what is true (I12). */
 const ROOTS = [ENTRIES_DIR, MEMORY_DIR];
@@ -61,14 +72,9 @@ export class Catalog {
     return this;
   }
 
-  /**
-   * Newest first. Timestamps are second-resolution for readability, so ties
-   * break on the id — which carries milliseconds and keeps the order stable.
-   */
+  /** Newest first, ties broken on the id so the order is the same every run. */
   entries(): Entry[] {
-    return [...this.byId.values()].sort((a, b) =>
-      a.created === b.created ? (a.id < b.id ? 1 : -1) : a.created < b.created ? 1 : -1,
-    );
+    return [...this.byId.values()].sort(byCreatedDesc);
   }
 
   /**

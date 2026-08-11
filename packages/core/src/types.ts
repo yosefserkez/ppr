@@ -53,6 +53,16 @@ export interface Entry {
   body: string;
   /** Vault-relative POSIX path. Derived from id + created; never user-supplied. */
   path: string;
+  /**
+   * The frontmatter of a file ppr could not read as YAML, kept verbatim.
+   *
+   * Present only on such a file. ppr holds no parsed copy of what is in there,
+   * so `serializeEntry` re-emits this block byte-for-byte rather than building
+   * a fresh one — the words still land (I2) and nothing is erased. The price is
+   * that a frontmatter change to such a file cannot be persisted; the file
+   * still loads meanwhile (its body, tags, and links all work).
+   */
+  raw?: { frontmatter: string };
 }
 
 /** Fields accepted when creating an entry. Everything optional but the body. */

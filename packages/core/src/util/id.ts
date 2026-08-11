@@ -1,9 +1,16 @@
 /** Crockford base32, minus I/L/O/U so ids stay unambiguous when read aloud. */
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 
-function encodeTime(ms: number, len: number): string {
+/**
+ * Fixed-width base32, zero-padded — the whole of the pure half of an id.
+ *
+ * Exported because a *derived* id (`idFromPath`) needs the same alphabet and
+ * must not go anywhere near `createId`, which mutates the monotonic counter
+ * below. A second copy of the alphabet is the one that drifts from `isId`.
+ */
+export function encodeTime(value: number, len: number): string {
   let out = '';
-  let n = ms;
+  let n = value;
   for (let i = 0; i < len; i++) {
     out = ALPHABET[n % 32]! + out;
     n = Math.floor(n / 32);

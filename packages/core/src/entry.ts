@@ -1,7 +1,7 @@
 import { MEMORY_KIND, type Entry, type EntryInput, type EntryPatch, type Kind } from './types.js';
 import { memoryPath } from './memory.js';
-import { parseDocument, serializeDocument } from './markdown.js';
-import { createId, timeFromId } from './util/id.js';
+import { parseDocument, serializeDocument, serializeRawDocument } from './markdown.js';
+import { createId, encodeTime, timeFromId } from './util/id.js';
 import { dayKey, timeKey, toLocalISO } from './util/time.js';
 import { extractLinks, extractTags, slugify, titleFromBody } from './util/text.js';
 
@@ -121,9 +121,13 @@ export function applyPatch(entry: Entry, patch: EntryPatch, now: Date = new Date
  * are adopted rather than rejected: ppr fills in what it can from the path.
  */
 export function parseEntry(path: string, raw: string): Entry {
-  const { data, body } = parseDocument(raw);
-  const created = firstDate(data.created, dateFromPath(path), timeFromId(String(data.id ?? '')));
-  const id = typeof data.id === 'string' && data.id ? data.id : createId(created);
+  const { data, body, rawFrontmatter } = parseDocument(raw);
+  // Kept apart from `created` because "the file named no day at all" is the
+  // case that decides how a derived id is built: fall back to now() first and
+  // the id is minted fresh on every read (see `idFromPath`).
+  const stated = statedDate(data.created, dateFromPath(path), timeFromId(String(data.id ?? '')));
+  const created = stated ?? new Date();
+  const id = typeof data.id === 'string' && data.id ? data.id : idFromPath(path, stated);
   const title = String(data.title ?? '').trim() || titleFromBody(body) || basename(path);
   const explicit = asStringArray(data.tags);
   const derived = derive(body, explicit);
@@ -145,10 +149,24 @@ export function parseEntry(path: string, raw: string): Entry {
   };
   if (typeof data.source === 'string' && data.source) entry.source = data.source;
   if (data.pinned === true) entry.pinned = true;
+  if (rawFrontmatter !== undefined) entry.raw = { frontmatter: rawFrontmatter };
   return entry;
 }
 
 export function serializeEntry(entry: Entry): string {
+  // Frontmatter ppr could not read is frontmatter ppr cannot rewrite: a fresh
+  // block over it takes the id and any third-party keys with it, silently. So
+  // the original block goes back out verbatim and the body — the part ppr did
+  // read — carries the change.
+  //
+  // Refusing here was the other option and it breaks I2: `ppr append` has
+  // already consumed stdin by the time this runs, so a throw costs the user
+  // the words they piped in and names only the file. No file problem may do
+  // that. The price is that a *frontmatter* change to such a file cannot be
+  // persisted — there is no readable block to merge into — which is why its
+  // identity is derived from the path instead (see `idFromPath`).
+  if (entry.raw) return serializeRawDocument(entry.raw.frontmatter, entry.body);
+
   const data: Record<string, unknown> = {
     id: entry.id,
     kind: entry.kind,
@@ -196,7 +214,8 @@ export const entryJson = (entry: Entry) => ({
   ...(Object.keys(entry.extra).length ? { extra: entry.extra } : {}),
 });
 
-function firstDate(...candidates: unknown[]): Date {
+/** The first candidate that names a real moment, or null if the file names none. */
+function statedDate(...candidates: unknown[]): Date | null {
   for (const c of candidates) {
     if (c instanceof Date && !Number.isNaN(c.getTime())) return c;
     if (typeof c === 'string' && c) {
@@ -204,8 +223,57 @@ function firstDate(...candidates: unknown[]): Date {
       if (!Number.isNaN(d.getTime())) return d;
     }
   }
-  return new Date();
+  return null;
 }
+
+const firstDate = (...candidates: unknown[]): Date => statedDate(...candidates) ?? new Date();
+
+/**
+ * An id for a file that arrived without one, derived from where it sits.
+ *
+ * `createId` rolls a fresh random tail on every call, so an adopted file used
+ * to become a *different* entry on every reindex — and `fact.from`, `[[id]]`,
+ * and the high-water mark all pointed at something that no longer existed.
+ * Deriving from the path instead makes adoption idempotent: the same file is
+ * the same entry, run after run. Files ppr wrote are unaffected; they always
+ * carry an `id` in frontmatter (see `serializeEntry`).
+ *
+ * Nothing here may route through `createId`, which mutates the monotonic
+ * counter in `util/id.ts`. Parsing is a *read* path, so one id-less file in a
+ * vault meant that merely listing it re-rolled the tail the next write was
+ * about to increment — L2, back again through the side door. `encodeTime` is
+ * the pure half and is all this needs.
+ *
+ * The head is the file's own moment when it has one — frontmatter `created`,
+ * or a dated filename — so an adopted entry still sorts where it belongs.
+ * When the file names no day, `created` is `new Date()`, so encoding it would
+ * mint a different id on every parse: exactly the re-roll this function
+ * exists to remove. The head is therefore hashed from the path too, and such
+ * an id sorts arbitrarily among ids. That is the honest answer for a file
+ * that never said when it was written, and it costs little: `created` decides
+ * order and the id is only the tiebreak (`util/order.ts`).
+ *
+ * Three seeds rather than one so the 80 bits of an id are not 32 bits
+ * repeated. Two adopted files hashing alike is possible and costs no more
+ * than the re-roll it replaces — and unlike the re-roll, it is not the common
+ * case.
+ */
+function idFromPath(path: string, stated: Date | null): string {
+  const head = stated
+    ? encodeTime(stated.getTime(), 10)
+    : base32(hash(path, 0x811c9dc5), 4) + base32(hash(path, 0x01000193), 6);
+  return head + base32(hash(path, 0x9e3779b1), 6);
+}
+
+/** FNV-1a. Deterministic and short; nothing here is a security boundary. */
+function hash(text: string, seed: number): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return h >>> 0;
+}
+
+/** Folded into exactly `len` id characters, so the result still passes `isId`. */
+const base32 = (n: number, len: number): string => encodeTime(n % 32 ** len, len);
 
 /** `entries/2026/07/2026-07-27-1432-slug-x7k2.md` -> local Date. */
 function dateFromPath(path: string): Date | null {

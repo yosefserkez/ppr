@@ -12,6 +12,7 @@ import {
   parseWhen,
   parseDuration,
   createId,
+  isId,
   timeFromId,
   parseDocument,
 } from '../dist/index.js';
@@ -49,12 +50,89 @@ test('a file with broken frontmatter keeps its body', () => {
   assert.equal(entry.body, 'The words still matter.');
 });
 
+test('a file whose frontmatter is not valid YAML keeps that block, and still takes words', () => {
+  const block = 'id: 0123456789abcdef\nmood: focused\nthis: is: not: valid: yaml:';
+  const raw = `---\n${block}\n---\n\nThe words still matter.\n`;
+  const path = 'entries/2026/07/2026-07-27-1200-note-ab12.md';
+  const entry = parseEntry(path, raw);
+
+  // Reading is unaffected — the note lists, shows, and searches as ever.
+  assert.equal(entry.body, 'The words still matter.');
+  // A fresh block would put ppr's guesses over the one nothing ever parsed,
+  // taking that id and `mood` with it. Refusing would be worse: by the time
+  // this runs `ppr append` has already read stdin, so a throw costs the user
+  // the words they piped in (I2). The block goes back out exactly as it came.
+  assert.equal(serializeEntry(entry), raw);
+
+  const appended = serializeEntry(applyPatch(entry, { body: `${entry.body}\n\nappended` }));
+  assert.match(appended, /this: is: not: valid: yaml:/, 'the block ppr cannot read is still there');
+  assert.match(appended, /appended/, 'and the new words landed');
+
+  const fine = createEntry({ body: 'Ordinary note' });
+  assert.equal(parseEntry(fine.path, serializeEntry(fine)).raw, undefined, 'a file that parsed carries none of this');
+});
+
+test('a broken frontmatter block round-trips through parse and serialize unchanged', () => {
+  const block = "tags: [unclosed, 'list\nweird: {oh: no";
+  const raw = `---\n${block}\n---\n\nStill a note.\n`;
+  const path = 'entries/2026/07/2026-07-27-1200-note-ab12.md';
+
+  const out = serializeEntry(parseEntry(path, raw));
+  assert.equal(out, raw);
+  assert.equal(parseDocument(out).rawFrontmatter, block, 'and it is still the same block on the way back in');
+});
+
 test('a hand-written file with no frontmatter is adopted', () => {
   const entry = parseEntry('entries/2026/03/2026-03-04-0915-hand-written-zz99.md', '# Hand written\n\nJust markdown.');
   assert.equal(entry.title, 'Hand written');
   assert.equal(new Date(entry.created).getFullYear(), 2026);
   assert.equal(new Date(entry.created).getMonth(), 2);
   assert.ok(entry.id);
+});
+
+test('an adopted file keeps the same id every time it is read', () => {
+  const path = 'entries/2026/03/2026-03-04-0915-hand-written-zz99.md';
+  const body = '# Hand written\n\nJust markdown.';
+
+  // Re-parsing is what a reindex or a cache miss does. A fresh id there means
+  // every `fact.from`, `[[id]]`, and high-water mark pointing at this file
+  // stops resolving.
+  assert.equal(parseEntry(path, body).id, parseEntry(path, body).id);
+  assert.ok(isId(parseEntry(path, body).id), 'and it is an ordinary id, so refs still find it');
+  assert.notEqual(
+    parseEntry('entries/2026/03/2026-03-04-0915-another-one-yy88.md', body).id,
+    parseEntry(path, body).id,
+    'two files are two entries',
+  );
+});
+
+test('an adopted file whose name carries no date keeps one id too', async () => {
+  const path = 'entries/inbox/whatever.md';
+  const body = '# Hand written\n\nJust markdown.';
+
+  const first = parseEntry(path, body).id;
+  // The head used to encode `created`, and a file that names no day has no
+  // `created` but `new Date()` — so the id was re-minted milliseconds apart,
+  // and `entries/inbox/` is where hand-filed notes actually live.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  assert.equal(parseEntry(path, body).id, first, 'the same file is the same entry, five milliseconds later');
+  assert.ok(isId(first), 'and it is an ordinary id, so refs still find it');
+  assert.notEqual(parseEntry('entries/inbox/other.md', body).id, first, 'two files are two entries');
+});
+
+test('reading an adopted file never disturbs the order of the next write', () => {
+  // Ids are monotonic within a millisecond (L2), and that counter is module
+  // state. Minting a derived id through `createId` reset it — so listing a
+  // vault holding one id-less file re-rolled the tail that the next two
+  // entries were relying on to sort.
+  const when = new Date('2026-07-27T12:00:00Z');
+  const ids = [];
+  for (let i = 0; i < 8; i++) {
+    ids.push(createId(when));
+    parseEntry('entries/inbox/whatever.md', '# Hand written\n\nJust markdown.');
+  }
+  assert.deepEqual(ids, [...ids].sort(), `ids minted around a parse stay ordered: ${ids.join(' ')}`);
 });
 
 test('tags and links ignore code spans and markdown headings', () => {
