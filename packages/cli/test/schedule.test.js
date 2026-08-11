@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
-import { crontabLine, jobArgv, labelFor, parseAt, plist, shellCommand } from '../dist/schedule.js';
+import {
+  crontabLine,
+  jobArgv,
+  labelFor,
+  parseAt,
+  plist,
+  programArgumentsFrom,
+  shellCommand,
+} from '../dist/schedule.js';
 
 test('a time of day is parsed or refused, never guessed', () => {
   assert.deepEqual(parseAt('08:00'), { hour: 8, minute: 0 });
@@ -57,6 +65,26 @@ test('a piped job quotes the argv but not the command the user typed', () => {
   assert.ok(line.endsWith('| mail -s "brief" me@example.com'), line);
 });
 
+test('a vault path with shell characters in it cannot run a second command at 3am', () => {
+  const argv = ['/usr/bin/node', '/repo/dist/index.js', '--vault', '/notes;rm -rf ~', 'brief', '--plain'];
+  const line = shellCommand({ job: 'brief', at: '08:00' }, argv);
+
+  assert.match(line, /'\/notes;rm -rf ~'/);
+  // An argument that needs no quoting keeps none, so the line stays readable
+  // and `ppr schedule ls` shows what somebody typed.
+  assert.ok(line.startsWith('/usr/bin/node /repo/dist/index.js --vault '), line);
+  assert.ok(line.endsWith(' brief --plain'), line);
+
+  for (const path of ['/notes/$(whoami)', '/notes/`id`', '/notes/a&b', '/notes/(x)', '/notes/*', '/notes/100%']) {
+    const quoted = shellCommand({ job: 'brief', at: '08:00' }, ['ppr', '--vault', path]);
+    assert.ok(quoted.endsWith(`'${path}'`), quoted);
+  }
+
+  // The pipe is still whatever the user typed, metacharacters and all.
+  const piped = shellCommand({ job: 'brief', at: '08:00', pipe: 'mail -s "$(date)" me' }, ['ppr', 'brief']);
+  assert.ok(piped.endsWith('| mail -s "$(date)" me'), piped);
+});
+
 test('a scheduled job names its interpreter instead of trusting PATH', () => {
   const argv = jobArgv({ job: 'learn', at: '03:00' }, process.execPath, '/repo/dist/index.js');
   // launchd runs with PATH=/usr/bin:/bin:/usr/sbin:/sbin and cron with as
@@ -83,10 +111,69 @@ test('paths with characters XML cares about survive', () => {
   assert.match(xml, /<string>\/tmp\/a&amp;b&lt;c&gt;<\/string>/);
 });
 
+test('`schedule ls` reads back the scheduled command and nothing else', () => {
+  const schedule = { job: 'learn', at: '03:00', vault: '/my notes/a&b' };
+  const argv = jobArgv(schedule, '/opt/homebrew/bin/node', '/repo/dist/index.js');
+  const xml = plist(schedule, argv);
+
+  assert.deepEqual(programArgumentsFrom(xml), argv);
+  // The label sits before the array and the two log paths after it, so a scan
+  // of the whole document reported a command ending in files nobody scheduled.
+  assert.match(xml, /<key>StandardOutPath<\/key>/);
+  assert.ok(
+    !programArgumentsFrom(xml).some((a) => a.endsWith('.log') || a === 'sh.ppr.learn'),
+    'log paths and the label are not part of the command',
+  );
+
+  // A piped job really is a shell running the pipe, and says so.
+  const piped = { job: 'brief', at: '08:00', pipe: 'ppr-notify' };
+  const briefArgv = jobArgv(piped, '/usr/bin/node', '/repo/dist/index.js');
+  assert.deepEqual(programArgumentsFrom(plist(piped, briefArgv)), [
+    '/bin/sh',
+    '-c',
+    shellCommand(piped, briefArgv),
+  ]);
+});
+
 test('the crontab line quotes what a shell would otherwise split', () => {
   const line = crontabLine({ job: 'learn', at: '03:07' }, ['ppr', '--vault', '/my notes', 'memory', 'learn']);
   assert.match(line, /^7 3 \* \* \* /);
   assert.match(line, /'\/my notes'/);
+});
+
+test('a `%` in a vault path is escaped for cron and left alone for launchd', () => {
+  const schedule = { job: 'learn', at: '03:00', vault: '/Users/me/100% notes' };
+  const argv = jobArgv(schedule, '/usr/bin/node', '/repo/dist/index.js');
+  const line = crontabLine(schedule, argv);
+
+  // cron rewrites the first unescaped `%` into a newline and sends the rest to
+  // the job on stdin, and it does that before /bin/sh sees the line — so the
+  // quotes alone would still leave the 3am run executing `--vault /Users/me/100`.
+  assert.match(line, /'\/Users\/me\/100\\% notes'/);
+  assert.ok(!/[^\\]%/.test(line), `an unescaped % truncates the whole line: ${line}`);
+  // Everything the job needs is still there, after the % rather than on stdin.
+  assert.ok(line.endsWith(' memory learn --quiet'), line);
+
+  // A plist has no such rule: `%` is an ordinary character inside a <string>,
+  // and a backslash written there would end up in the path itself.
+  const xml = plist(schedule, argv);
+  assert.match(xml, /<string>\/Users\/me\/100% notes<\/string>/);
+  assert.doesNotMatch(xml, /\\%/);
+});
+
+test('a `%` the user typed into a --pipe is escaped for cron too', () => {
+  const schedule = { job: 'brief', at: '08:00', pipe: 'mail -s "100% done" me' };
+  const argv = ['/usr/bin/node', '/repo/dist/index.js', 'brief', '--plain'];
+
+  // The pipe is part of the same crontab line, and cron truncates at the first
+  // unescaped `%` wherever it is — including inside a command somebody typed,
+  // where the character meant a percent sign and nothing else.
+  const line = crontabLine(schedule, argv);
+  assert.ok(line.endsWith('| mail -s "100\\% done" me'), line);
+
+  // launchd hands the same string to /bin/sh with no cron in between, so the
+  // pipe stays exactly what was typed.
+  assert.ok(shellCommand(schedule, argv).endsWith('| mail -s "100% done" me'), shellCommand(schedule, argv));
 });
 
 test('job labels are stable — they are what the OS is keyed on', () => {

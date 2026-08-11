@@ -135,7 +135,7 @@ ${args}
 /** The crontab line for everything that is not macOS. */
 export function crontabLine(schedule: Schedule, argv: string[]): string {
   const at = parseAt(schedule.at) ?? { hour: 3, minute: 0 };
-  return `${at.minute} ${at.hour} * * * ${shellCommand(schedule, argv)}`;
+  return `${at.minute} ${at.hour} * * * ${escapePercent(shellCommand(schedule, argv))}`;
 }
 
 /**
@@ -159,10 +159,59 @@ export function shellCommand(schedule: Schedule, argv: string[]): string {
 export const programArguments = (schedule: Schedule, argv: string[]): string[] =>
   schedule.pipe ? ['/bin/sh', '-c', shellCommand(schedule, argv)] : argv;
 
-const quote = (arg: string): string => (/[\s"']/.test(arg) ? `'${arg.replace(/'/g, `'\\''`)}'` : arg);
+/**
+ * Anything outside this set is single-quoted. Quoting an argument that did not
+ * need it costs nothing; leaving a `$`, `;`, or backtick in a vault path bare
+ * runs extra shell words at 3am, in a log nobody reads. Only the argv comes
+ * through here — the pipe target is the user's own command line (`shellCommand`).
+ *
+ * `%` is absent from the set even though no shell cares about it, because cron
+ * does (`escapePercent`) — an argument the scheduler will rewrite is not an
+ * argument to leave bare.
+ */
+const quote = (arg: string): string =>
+  /^[A-Za-z0-9_@+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * `%` belongs to cron, not to the shell.
+ *
+ * cron rewrites the first unescaped `%` in a line into a newline, runs only
+ * what came before it, and feeds the rest to the job on stdin. It does that to
+ * the crontab line itself, before `/bin/sh` is handed anything, so quoting
+ * cannot reach it: `'/Users/me/100% notes'` still truncates the command. Only
+ * `\%` survives, and cron strips that backslash on the way through, so the
+ * shell ends up seeing the plain `%` inside the quotes it expected.
+ *
+ * The whole line goes through here, the user's `--pipe` included: one
+ * unescaped `%` anywhere truncates everything after it, and a `%` somebody
+ * typed into a shell command line meant a percent sign. launchd has no such
+ * rule — a `%` is ordinary inside a plist `<string>` and a backslash there
+ * would land in the path — which is why this lives in `crontabLine` rather
+ * than in the `shellCommand` both schedulers share.
+ */
+const escapePercent = (line: string): string => line.replace(/%/g, '\\%');
 
 const escapeXml = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** `&amp;` last, or an escaped `&lt;` would come back as a real `<`. */
+const unescapeXml = (s: string): string =>
+  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/**
+ * The argv of an installed agent, read out of `ProgramArguments` and nowhere
+ * else.
+ *
+ * A plist holds `<string>`s on either side of that array — the Label before it,
+ * the two log paths after — so scanning the whole document reported a command
+ * that ended in a pair of log files the user never scheduled. `ppr schedule ls`
+ * is only worth having if it says what launchd will actually run.
+ */
+export function programArgumentsFrom(raw: string): string[] {
+  const block = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(raw);
+  if (!block) return [];
+  return [...block[1]!.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => unescapeXml(m[1]!));
+}
 
 export const supportsInstall = (): boolean => process.platform === 'darwin';
 
@@ -247,7 +296,7 @@ export async function installed(): Promise<InstalledJob[]> {
       job: match[1]!,
       at: `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`,
       path,
-      argv: [...raw.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]!).slice(1),
+      argv: programArgumentsFrom(raw),
     });
   }
   return out.sort((a, b) => a.at.localeCompare(b.at));
