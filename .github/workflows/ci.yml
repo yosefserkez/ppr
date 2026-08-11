@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# A second push supersedes the first, and six jobs per run is enough to stack up
+# a queue nobody is reading by the time it drains.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -23,8 +29,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # `pnpm build` is `tsc`, so it already fails on any type error — a
+      # separate `pnpm typecheck` step ran the same check twice and threw the
+      # output away. The npm script stays, for local use.
       - run: pnpm build
-      - run: pnpm typecheck
       # The suite never reaches the network: providers are exercised against a
       # local stub server, and the vault against an in-memory store.
       - run: pnpm test
