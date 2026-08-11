@@ -1,7 +1,7 @@
 # @ppr/core
 
-The engine behind [ppr](../../README.md). No platform APIs, no CLI concerns — just
-entries, search, links, capture pipelines, and AI tasks.
+The engine behind [ppr](https://github.com/yosefserkez/ppr). No platform APIs, no
+CLI concerns — just entries, search, links, capture pipelines, and AI tasks.
 
 This package exists so the second front-end is a wiring exercise instead of a rewrite.
 

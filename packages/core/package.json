@@ -18,8 +18,21 @@
     "dist",
     "README.md"
   ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yosefserkez/ppr.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/yosefserkez/ppr#readme",
+  "bugs": {
+    "url": "https://github.com/yosefserkez/ppr/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm build",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.json && node --test \"test/*.test.js\"",

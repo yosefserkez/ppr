@@ -35,7 +35,7 @@ because a model was unavailable, and nothing silently discards your words.
 ## Install
 
 ```bash
-git clone https://github.com/yourname/ppr && cd ppr
+git clone https://github.com/yosefserkez/ppr && cd ppr
 ./scripts/install.sh
 ppr setup
 ```
@@ -76,25 +76,25 @@ Rebuild chatter goes to stderr, so `ppr ls --json | jq` stays clean.
 ## Capture
 
 
-| Command            | What it does                                                      |
-| ------------------ | ----------------------------------------------------------------- |
-| `ppr "text"`       | Quick log. The fastest path from thought to file.                 |
-| `ppr + text`       | The same, without quoting.                                        |
-| `ppr write`        | A longer entry, composed in `$EDITOR`. Asks a follow-up question. |
-| `ppr`              | What you wrote today. Writes nothing.                             |
-| `ppr dump [text]`  | Brain dump in, clean entry out. Reads stdin.                      |
-| `ppr clip <url>`   | Fetches a page, extracts the content, saves what it says.         |
-| `ppr voice [file]` | Records, transcribes, distills.                                   |
-| `ppr append <ref>` | Keeps a thread going.                                             |
-| `ppr remind <when> <text>` | Something to be reminded of, on a day.                    |
-| `ppr todo <text>`  | Something to do, with no day on it.                               |
-| `ppr todos`        | Everything open, overdue first.                                   |
-| `ppr done <ref>`   | That reminder or todo is dealt with.                              |
+| Command                    | What it does                                                      |
+| -------------------------- | ----------------------------------------------------------------- |
+| `ppr "text"`               | Quick log. The fastest path from thought to file.                 |
+| `ppr + text`               | The same, without quoting.                                        |
+| `ppr write`                | A longer entry, composed in `$EDITOR`. Asks a follow-up question. |
+| `ppr`                      | What you wrote today. Writes nothing.                             |
+| `ppr dump [text]`          | Brain dump in, clean entry out. Reads stdin.                      |
+| `ppr clip <url>`           | Fetches a page, extracts the content, saves what it says.         |
+| `ppr voice [file]`         | Records, transcribes, distills.                                   |
+| `ppr append <ref>`         | Keeps a thread going.                                             |
+| `ppr remind <when> <text>` | Something to be reminded of, on a day.                            |
+| `ppr todo <text>`          | Something to do, with no day on it.                               |
+| `ppr todos`                | Everything open, overdue first.                                   |
+| `ppr done <ref>`           | That reminder or todo is dealt with.                              |
 
 
 `ppr dump` is the one to reach for when thoughts arrive faster than sentences. It
 cuts filler and repetition, keeps every fact, and never invents anything.   
-  
+
 A bare URL is treated as a clip, because remembering which command you wanted is not a good use of anyone's attention.
 
 ### A note is a sentence; a command is a word
@@ -318,13 +318,15 @@ fragment.
 ## Think
 
 
-| Command                | What it does                                        |
-| ---------------------- | --------------------------------------------------- |
-| `ppr recap --since 7d` | Standup, weekly review, or narrative.               |
-| `ppr thread <query>`   | Pick up a line of thought where you left it.        |
-| `ppr ask <question>`   | An answer grounded in your entries, with citations. |
-| `ppr brief`            | What is coming up, from the dates ppr already holds.|
+| Command                | What it does                                           |
+| ---------------------- | ------------------------------------------------------ |
+| `ppr recap --since 7d` | Standup, weekly review, or narrative.                  |
+| `ppr thread <query>`   | Pick up a line of thought where you left it.           |
+| `ppr ask <question>`   | An answer grounded in your entries, with citations.    |
+| `ppr brief`            | What is coming up, from the dates ppr already holds.   |
 | `ppr context [query]`  | Everything ppr knows, for another tool to reason with. |
+
+
 
 
 ### Threads
@@ -393,6 +395,8 @@ $ ppr "asked the roaster what their smallest white-label run really is"
   ↳ continues a thread (9 entries) — ppr thread 285kys
 ```
 
+
+
 ## Memory
 
 `recap` looks backwards at what happened. Memory holds what is *true*: one-line
@@ -422,7 +426,7 @@ is true is not a feature.
 
 Facts are markdown files in `memory/`, one per fact, editable in vim like
 everything else. The store is a projection rather than a second place your data
-lives: **delete `memory/` and `ppr memory learn --all` rebuilds it.**
+lives: **delete** `memory/` **and** `ppr memory learn --all` **rebuilds it.**
 
 Facts stay out of `ppr ls`, `recap`, and `search`, because state does not belong
 in a timeline. `ppr search emily -k memory` looks in them, and a search that
@@ -451,6 +455,8 @@ ppr brief --json | jq '.[] | select(.overdue)'
 ppr brief --notify                            # and as a notification
 ```
 
+
+
 ### Handing it to something else
 
 `ppr context` is the point of the whole layer. ppr is where notes go *in*; what
@@ -462,6 +468,8 @@ someone else's prompt.
 ppr context "gift for emily" | claude -p "help me pick something"
 ppr context --json | jq .facts
 ```
+
+
 
 ### On a timer
 
@@ -484,7 +492,6 @@ and ppr does not need to know what is on the other end of it.
 Only `learn` needs a model. `ppr ai test` sends one prompt end to end and says
 whether yours answers — and whether it answers in JSON, which is what every ppr
 task actually asks for. Everything else on this page works offline.
-
 
 ## Setup and diagnosis
 
@@ -546,6 +553,8 @@ With no terminal it prints the numbered list and reads one line per question, so
 ppr config set ai.provider command
 ppr config set ai.command "llm -m mistral-7b"
 ```
+
+
 
 ### Where the API key goes
 
@@ -707,7 +716,7 @@ so ppr fans out once, from the command you ran. Otherwise a hook that logs a
 copy somewhere is a new process per entry, forever. If yours wants a second
 thing to happen, it runs it itself.
 
-**A `ppr-foo` on your `PATH`** is a subcommand, the way `git-foo` is:
+**A** `ppr-foo` **on your** `PATH` is a subcommand, the way `git-foo` is:
 
 ```sh
 #!/bin/sh
@@ -715,13 +724,13 @@ thing to happen, it runs it itself.
 ppr recap --since 1d --style standup | pbcopy
 ```
 
-**`ppr plugins`** shows the whole wiring diagram: which commands are listening
+`ppr plugins` shows the whole wiring diagram: which commands are listening
 to which events, what `--push` and `--notify` currently resolve to on your
 `PATH`, every `ppr-*` you have installed, and which `plugins.<name>` settings
 are set. Nothing is stored — it is computed from your machine each time, so it
 cannot drift from the truth.
 
-**`--dry-run`** is how you check a wiring change without triggering it:
+`--dry-run` is how you check a wiring change without triggering it:
 
 ```bash
 ppr --dry-run "shipped it"                # the entry, and the hook it would fire
@@ -771,19 +780,8 @@ engine against an in-memory store with no filesystem involved. See
 
 ```bash
 pnpm build       # both packages
-pnpm test        # 287 tests, plugins included, no network required
+pnpm test        # the whole suite, plugins included, no network required
 pnpm eval        # scores the memory pipeline against a real model (costs money)
 pnpm typecheck
 ```
 
-
-
-## Prior art
-
-Inspired by [paper](https://paper.rewrlution.com/), which makes the case that your
-tools remember what shipped but not why. ppr takes that further: everything local,
-everything scriptable, and the AI features are the free part.
-
-## License
-
-MIT
