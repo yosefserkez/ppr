@@ -59,6 +59,28 @@ test('renaming an entry moves the file and leaves no orphan', async () => {
   assert.equal(vault.list().length, 1);
 });
 
+test('a failed write while renaming never loses the entry', async () => {
+  const storage = new MemoryStorage();
+  let refuse = () => false;
+  // The disk gives up exactly once, on the file the rename is moving to.
+  const flaky = {
+    read: (path) => storage.read(path),
+    write: (path, data) => (refuse(path) ? Promise.reject(new Error('disk full')) : storage.write(path, data)),
+    remove: (path) => storage.remove(path),
+    list: (prefix) => storage.list(prefix),
+    stat: (path) => storage.stat(path),
+  };
+
+  const vault = await Vault.open({ root: '/memory', storage: flaky, config: structuredClone(DEFAULT_CONFIG) });
+  const entry = await vault.add({ body: 'body', title: 'Old name' });
+
+  refuse = (path) => path !== entry.path;
+  await assert.rejects(() => vault.update(entry.id, { title: 'New name' }), /disk full/);
+
+  assert.ok(await storage.read(entry.path), 'the words are still on disk under the old name');
+  assert.equal(vault.get(entry.id).title, 'Old name');
+});
+
 test('deleting removes the file and the index entry', async () => {
   const { vault, storage } = await makeVault();
   const entry = await vault.add({ body: 'temporary' });

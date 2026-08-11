@@ -348,8 +348,12 @@ export class Vault {
   async update(ref: string, patch: EntryPatch): Promise<Entry> {
     const current = this.catalog.resolve(ref);
     const next = applyPatch(current, patch, this.clock.now());
-    if (next.path !== current.path) await this.storage.remove(current.path).catch(() => {});
+    // A retitle moves the file, so the new copy exists before the old one
+    // goes: removing first meant a failed write left the note nowhere (I2).
+    // The remove stays swallowed — by then the words are already safe, and a
+    // failed cleanup is an orphan rather than a lost entry.
     await this.write(next);
+    if (next.path !== current.path) await this.storage.remove(current.path).catch(() => {});
     this.emit({ event: 'entry.updated', entry: next, previous: current });
     return next;
   }
