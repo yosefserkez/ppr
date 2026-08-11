@@ -456,6 +456,9 @@ const whisperModelCheck: Check = {
 
     const draw = progressLine();
     const result = await downloadFile(model.url, destination, {
+      // Only when the catalogue knows one: an absent digest downloads
+      // unverified, which is the state every whisper model is in today.
+      ...(model.sha256 ? { sha256: model.sha256 } : {}),
       onProgress: ({ received, total, fraction }) => {
         const pct = fraction === null ? '' : ` ${Math.round(fraction * 100)}%`;
         draw(`  ${color.dim(`downloading ${model.file}${pct} (${formatBytes(received)}/${formatBytes(total)})`)}`);

@@ -1,4 +1,5 @@
-import { createWriteStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,7 +23,28 @@ export interface DownloadOptions {
   signal?: AbortSignal;
   /** Return the existing file untouched if it is already there. Default true. */
   skipExisting?: boolean;
+  /**
+   * Expected SHA-256 of the bytes, lowercase hex. A model URL is a mutable ref
+   * on somebody else's server, so "the file at this address" is not a
+   * description of any particular bytes. When a digest is declared nothing is
+   * allowed under the real filename until the bytes match it.
+   */
+  sha256?: string;
 }
+
+/** Streamed, because a model is gigabytes and reading it into memory is not. */
+async function fileDigest(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest('hex');
+}
+
+const digestMismatch = (what: string, expected: string, actual: string, hint: string): PprError =>
+  new PprError(
+    'ENETWORK',
+    `Checksum mismatch for ${what}: expected sha256 ${expected}, got ${actual}`,
+    hint,
+  );
 
 /**
  * Downloads to a temp file and renames on success, so an interrupted download
@@ -33,8 +55,22 @@ export async function downloadFile(
   destination: string,
   opts: DownloadOptions = {},
 ): Promise<{ path: string; bytes: number; skipped: boolean }> {
+  const expected = opts.sha256?.trim().toLowerCase();
   const existing = await stat(destination).catch(() => null);
   if (existing?.isFile() && opts.skipExisting !== false) {
+    // A file that is already there is exactly the one the check exists for:
+    // skipping it unverified means one bad download is trusted forever.
+    if (expected) {
+      const actual = await fileDigest(destination);
+      if (actual !== expected) {
+        throw digestMismatch(
+          destination,
+          expected,
+          actual,
+          'That file is not the one ppr expects. Delete it and run this again to re-download.',
+        );
+      }
+    }
     return { path: destination, bytes: existing.size, skipped: true };
   }
 
@@ -57,17 +93,34 @@ export async function downloadFile(
   const total = Number(response.headers.get('content-length') ?? 0);
   let received = 0;
 
+  const hash = expected ? createHash('sha256') : null;
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
   source.on('data', (chunk: Buffer) => {
     received += chunk.length;
+    hash?.update(chunk);
     opts.onProgress?.({ received, total, fraction: total ? received / total : null });
   });
 
   try {
     await pipeline(source, createWriteStream(temp));
+    // Before the rename, because the rename is what makes the bytes real: a
+    // model that failed its digest must never exist under a name whisper.cpp
+    // would load.
+    if (hash && expected) {
+      const actual = hash.digest('hex');
+      if (actual !== expected) {
+        throw digestMismatch(
+          url,
+          expected,
+          actual,
+          'Nothing was installed. If this keeps happening the file has been republished and the digest ppr carries is stale.',
+        );
+      }
+    }
     await rename(temp, destination);
   } catch (err) {
     await rm(temp, { force: true });
+    if (err instanceof PprError) throw err;
     throw new PprError('ENETWORK', `Download failed: ${(err as Error).message}`);
   }
   return { path: destination, bytes: received, skipped: false };

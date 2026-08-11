@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TranscribeConfig } from '../config.js';
@@ -8,15 +8,30 @@ import type { AudioInput, Transcriber } from '../ports.js';
 import { run, which } from './exec.js';
 import { shellQuote } from './command-provider.js';
 
-const tmpFile = (ext: string): string => join(tmpdir(), `ppr-${process.pid}-${Date.now()}.${ext}`);
+/**
+ * Every audio artifact goes in its own private directory. A name built from
+ * the pid and the clock is guessable, and /tmp is shared: whoever gets a
+ * symlink in first at the name we are about to write has redirected the write.
+ * `mkdtemp` is the one call that hands back a path nobody could have prepared,
+ * and it is mode 0700, so what lands inside is nobody else's to read either.
+ */
+const tmpDir = (): Promise<string> => mkdtemp(join(tmpdir(), 'ppr-'));
+
+/** The whole directory goes, so a converter's stray sidecar files go with it. */
+const discard = (dir: string): Promise<void> => rm(dir, { recursive: true, force: true });
 
 async function materialize(audio: AudioInput): Promise<{ path: string; cleanup: () => Promise<void> }> {
   if (audio.path) return { path: audio.path, cleanup: async () => {} };
   if (!audio.bytes) throw new PprError('EINVALID', 'No audio supplied');
-  const path = tmpFile(audio.mime?.includes('wav') ? 'wav' : 'm4a');
-  const { writeFile } = await import('node:fs/promises');
-  await writeFile(path, audio.bytes);
-  return { path, cleanup: () => rm(path, { force: true }) };
+  const dir = await tmpDir();
+  const path = join(dir, `audio.${audio.mime?.includes('wav') ? 'wav' : 'm4a'}`);
+  try {
+    await writeFile(path, audio.bytes);
+  } catch (err) {
+    await discard(dir);
+    throw err;
+  }
+  return { path, cleanup: () => discard(dir) };
 }
 
 /** whisper.cpp wants 16 kHz mono WAV; ffmpeg is only invoked when it must be. */
@@ -29,10 +44,25 @@ async function toWav16k(path: string): Promise<{ path: string; cleanup: () => Pr
       'brew install ffmpeg — or record straight to .wav',
     );
   }
-  const out = tmpFile('wav');
-  const { code, stderr } = await run('ffmpeg', ['-nostdin', '-y', '-i', path, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out]);
-  if (code !== 0) throw new PprError('EEXTERNAL', `ffmpeg failed: ${stderr.trim().slice(0, 300)}`);
-  return { path: out, cleanup: () => rm(out, { force: true }) };
+  // Its own directory rather than the input's: each half has its own cleanup,
+  // and removing a directory is not something to do while the other still
+  // needs what is in it.
+  const dir = await tmpDir();
+  const out = join(dir, 'audio-16k.wav');
+  // Both failures, not just the interesting one: `run` rejects when the spawn
+  // itself fails — ffmpeg gone between the `which` above and here, EACCES,
+  // EAGAIN under load — and nobody downstream has a handle on this directory
+  // to clean it up, so a rejection that walked past here leaked one per go.
+  try {
+    const { code, stderr } = await run('ffmpeg', ['-nostdin', '-y', '-i', path, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out]);
+    if (code !== 0) {
+      throw new PprError('EEXTERNAL', `ffmpeg failed: ${stderr.trim().slice(0, 300)}`);
+    }
+  } catch (err) {
+    await discard(dir);
+    throw err;
+  }
+  return { path: out, cleanup: () => discard(dir) };
 }
 
 function whisperCpp(cfg: TranscribeConfig): Transcriber {
@@ -49,18 +79,23 @@ function whisperCpp(cfg: TranscribeConfig): Transcriber {
         );
       }
       const input = await materialize(audio);
-      const wav = await toWav16k(input.path);
+      // Nested rather than sequential: a conversion that throws must not take
+      // the materialised input's directory with it into the leak pile.
       try {
-        const args = ['-m', cfg.model, '-f', wav.path, '-nt', '-np'];
-        if (cfg.language) args.push('-l', cfg.language);
-        const { code, stdout, stderr } = await run(binary, args, {
-          timeoutMs: 600_000,
-          ...(opts?.signal ? { signal: opts.signal } : {}),
-        });
-        if (code !== 0) throw new PprError('EEXTERNAL', stderr.trim().slice(0, 400) || `${binary} exited with ${code}`);
-        return stdout.replace(/^\s*\[[^\]]*\]\s*/gm, '').trim();
+        const wav = await toWav16k(input.path);
+        try {
+          const args = ['-m', cfg.model, '-f', wav.path, '-nt', '-np'];
+          if (cfg.language) args.push('-l', cfg.language);
+          const { code, stdout, stderr } = await run(binary, args, {
+            timeoutMs: 600_000,
+            ...(opts?.signal ? { signal: opts.signal } : {}),
+          });
+          if (code !== 0) throw new PprError('EEXTERNAL', stderr.trim().slice(0, 400) || `${binary} exited with ${code}`);
+          return stdout.replace(/^\s*\[[^\]]*\]\s*/gm, '').trim();
+        } finally {
+          await wav.cleanup();
+        }
       } finally {
-        await wav.cleanup();
         await input.cleanup();
       }
     },
@@ -157,7 +192,6 @@ export interface Recording {
  * when they say "my microphone".
  */
 export async function record(opts: { device?: string } = {}): Promise<Recording> {
-  const path = tmpFile('wav');
   const sox = await which('rec');
   const ffmpeg = sox ? null : await which('ffmpeg');
 
@@ -169,6 +203,11 @@ export async function record(opts: { device?: string } = {}): Promise<Recording>
     );
   }
 
+  // The recording outlives this call — a failed transcription tells the user
+  // where their audio is — so the directory is deliberately not cleaned up.
+  // It is created after the recorder check so a machine with neither tool
+  // leaves nothing behind.
+  const path = join(await tmpDir(), 'recording.wav');
   const device = opts.device?.trim() || 'default';
   const child = sox
     ? spawn('rec', ['-q', '-c', '1', '-r', '16000', '-b', '16', path], {
