@@ -4,7 +4,7 @@ import { PprError, truncate, VERSION } from '@ppr/core';
 import { globals, hoistGlobals, withVault } from './context.js';
 import { dryRun, printPlan, would } from './dryrun.js';
 import { closePrompts, hasStdin, resolveText } from './input.js';
-import { color, entryJson, errline, json, out, setColor, shortId } from './render.js';
+import { color, errline, setColor } from './render.js';
 import { overview } from './overview.js';
 import { externalFor, externalName, runExternal } from './external.js';
 import { suggest } from './suggest.js';

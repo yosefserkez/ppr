@@ -1,5 +1,5 @@
 import type { Entry } from '@ppr/core';
-import { formatDay, formatTime, plainText, relativeAge, shortId, truncate } from '@ppr/core';
+import { formatDay, formatTime, relativeAge, shortId, truncate } from '@ppr/core';
 import { color } from '../render.js';
 import { currentView, focused, visibleEntries, type BrowserState } from './state.js';
 import { plain, row, wrap, type Segment, type Style } from './text.js';
@@ -43,7 +43,7 @@ function entryRow(entry: Entry, width: number, selected: boolean, now: Date): st
 }
 
 /** The right-hand (or lower) pane: the focused entry, fitted to the space. */
-function previewLines(entry: Entry | undefined, width: number, height: number, now: Date): string[] {
+function previewLines(entry: Entry | undefined, width: number, height: number): string[] {
   if (!entry) return [plain('', width)];
   const date = new Date(entry.created);
   const lines: string[] = [];
@@ -106,7 +106,7 @@ export function render(state: BrowserState, size: Size, now: Date): string[] {
   let body: string[];
   if (sideBySide) {
     const previewWidth = columns - listWidth - 3;
-    const preview = previewLines(entry, Math.max(PREVIEW_MIN - 4, previewWidth), bodyHeight, now);
+    const preview = previewLines(entry, Math.max(PREVIEW_MIN - 4, previewWidth), bodyHeight);
     body = [];
     for (let i = 0; i < bodyHeight; i++) {
       body.push(`${listLines[i] ?? plain('', listWidth)} ${color.dim('│')} ${preview[i] ?? ''}`);
@@ -116,7 +116,7 @@ export function render(state: BrowserState, size: Size, now: Date): string[] {
     body = [
       ...listLines,
       color.dim('─'.repeat(columns)),
-      ...previewLines(entry, columns, Math.max(1, previewHeight), now),
+      ...previewLines(entry, columns, Math.max(1, previewHeight)),
     ];
   }
 
