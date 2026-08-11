@@ -253,6 +253,18 @@ async function writeScript(dir, name, body) {
 }
 
 /**
+ * The PATH a spawned ppr is given whenever a test cares what is installed.
+ *
+ * Never `process.env.PATH`. A developer who has run `install.sh` has a real
+ * `ppr-notify` and `ppr-reminders-push` on theirs, so inheriting it makes every
+ * assertion below a claim about *that machine* rather than about ppr — and one
+ * that only fails for the person who installed the thing. Only the dirs the
+ * test wrote, plus the two the `#!/bin/sh` scripts need to find `cat`, `touch`,
+ * and `wc`; a plugin never lands in either of those.
+ */
+const testPath = (...dirs) => [...dirs, '/usr/bin', '/bin'].join(':');
+
+/**
  * Long enough for a child ppr let go of at the end of a command to finish.
  * The parent drains for two seconds and then unrefs, so anything asserted
  * about what a hook did has to outwait that.
@@ -389,7 +401,7 @@ test('`ppr hooks add` wires a command that then actually fires', async () => {
   await withVault(async (dir) => {
     const marker = join(dir, 'fired');
     await writeScript(dir, 'ppr-marker', `touch "${marker}"`);
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
 
     assert.equal((await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-marker'], { env })).code, 0);
 
@@ -435,7 +447,7 @@ test('--dry-run writes nothing, runs nothing, and says what it would have', asyn
   await withVault(async (dir) => {
     const marker = join(dir, 'fired');
     await writeScript(dir, 'ppr-marker', `touch "${marker}"`);
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
     await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-marker'], { env });
 
     const { code, stderr } = await ppr(dir, ['--dry-run', 'shipped the migration'], { env });
@@ -560,7 +572,7 @@ test('`ppr plugins` answers who hears what, and what a flag currently means', as
     // one `ppr plugins` has to name, or the report is worse than none.
     await mkdir(join(dir, 'bin2'), { recursive: true });
     await writeFile(join(dir, 'bin2', 'ppr-standup'), '#!/bin/sh\necho "shadowed"\n', { mode: 0o755 });
-    const env = { PATH: `${join(dir, 'bin')}:${join(dir, 'bin2')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin'), join(dir, 'bin2')) };
 
     await ppr(dir, ['hooks', 'add', 'entry.created', 'ppr-notify'], { env });
     await ppr(dir, ['config', 'set', 'plugins.standup.style', 'weekly']);
@@ -592,7 +604,7 @@ test('an unknown word runs `ppr-<word>` from PATH, the way git does', async () =
       'ppr-foo',
       'echo "foo ran with: $*"\necho "vault=$PPR_VAULT json=${PPR_JSON:-0} quiet=${PPR_QUIET:-0}"\nexit 7',
     );
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
 
     const ran = await ppr(dir, ['foo', 'a', '--verbose'], { env });
     // Its arguments are its own — ppr has no opinion about `--verbose`.
@@ -1392,7 +1404,7 @@ test('--push hands the entry to whatever `ppr-reminders-push` is', async () => {
     // A stand-in for the one ppr ships. The flag names the intent; this name
     // on PATH is what resolves the tool — swap the file, swap the meaning.
     await writeScript(dir, 'ppr-reminders-push', `cat > "${seen}"`);
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
 
     const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
     assert.equal(code, 0);
@@ -1419,7 +1431,7 @@ test('--push with nothing installed explains itself and keeps the entry', async 
   await withVault(async (dir) => {
     await mkdir(join(dir, 'empty'), { recursive: true });
     const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], {
-      env: { PATH: join(dir, 'empty') },
+      env: { PATH: testPath(join(dir, 'empty')) },
     });
 
     assert.equal(code, 0, 'a missing courier is not a failed write');
@@ -1435,7 +1447,7 @@ test('a plugin that exits 0 with something to say is still heard', async () => {
     // exit 0, because a courier that cannot deliver must not turn a capture
     // red. Swallowing it would leave the user told a copy was made.
     await writeScript(dir, 'ppr-reminders-push', 'echo "ppr-reminders-push: not on this platform" >&2');
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
 
     const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
     assert.equal(code, 0);
@@ -1448,7 +1460,7 @@ test('--notify sends the brief to whatever `ppr-notify` is', async () => {
   await withVault(async (dir) => {
     const seen = join(dir, 'notified.txt');
     await writeScript(dir, 'ppr-notify', `printf 'title=%s\\n' "$2" > "${seen}"\ncat >> "${seen}"`);
-    const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH}` };
+    const env = { PATH: testPath(join(dir, 'bin')) };
     await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
 
     const { code, stdout } = await ppr(dir, ['brief', '--notify'], { env });
@@ -1464,7 +1476,7 @@ test('--notify sends the brief to whatever `ppr-notify` is', async () => {
 
     // And with nothing on PATH the convention is named rather than guessed at.
     await mkdir(join(dir, 'empty'), { recursive: true });
-    const bare = await ppr(dir, ['brief', '--notify'], { env: { PATH: join(dir, 'empty') } });
+    const bare = await ppr(dir, ['brief', '--notify'], { env: { PATH: testPath(join(dir, 'empty')) } });
     assert.equal(bare.code, 0);
     assert.match(bare.stderr, /Nothing called ppr-notify on your PATH/);
     assert.equal(bare.stdout, stdout, 'the output is the output either way');
