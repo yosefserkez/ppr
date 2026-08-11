@@ -8,26 +8,22 @@ import {
   guardVaultScope,
   keyEnvFor,
   looksLikeSecret,
-  mergeConfig,
   parseJsonLoose,
+  redactConfig,
   redactSecret,
-  setPath,
-  validateConfig,
+  redactValue,
   type AIConfig,
   type Config,
 } from '@ppr/core';
 import {
-  createTranscriber,
   credentialsPath,
   findVault,
   globalConfigPath,
   initVault,
   loadConfig,
   loadSecrets,
-  openVault,
   readConfigLayer,
   saveSecret,
-  which,
   writeConfigLayer,
   VAULT_CONFIG,
 } from '@ppr/core/node';
@@ -66,9 +62,16 @@ export function initCommand(): Command {
     });
 }
 
-/** Where a config write should land: this vault only, or every vault. */
-function configTarget(scope: { local?: boolean }, root: string): string {
-  return scope.local ? join(root, VAULT_CONFIG) : globalConfigPath();
+/**
+ * `config list`'s rows, built out here where they can be tested: what a value
+ * is allowed to look like on the way out is a rule (I7), not a rendering
+ * detail, and it should not need a spawned binary to pin it down.
+ */
+export function configRows(config: Config): Array<[string, string]> {
+  return flattenConfig(config).map(([k, v]): [string, string] => [
+    color.cyan(k),
+    v === undefined ? color.dim('—') : String(redactValue(k, v)),
+  ]);
 }
 
 export function configCommand(): Command {
@@ -80,15 +83,10 @@ export function configCommand(): Command {
     .description('show the effective configuration')
     .action(async (_flags: unknown, self: Command) =>
       withVault(self, async (vault) => {
-        if (globals(self).json) return json(vault.config);
-        out(
-          table(
-            flattenConfig(vault.config).map(([k, v]) => [
-              color.cyan(k),
-              v === undefined ? color.dim('—') : String(v),
-            ]),
-          ),
-        );
+        // `--json` hands over the config wholesale, so it needs the same pass
+        // the table gets — it is the easier of the two to pipe somewhere.
+        if (globals(self).json) return json(redactConfig(vault.config));
+        out(table(configRows(vault.config)));
       }),
     );
 
@@ -100,8 +98,11 @@ export function configCommand(): Command {
       withVault(self, async (vault) => {
         const value = getPath(vault.config, key);
         if (value === undefined) throw new PprError('ECONFIG', `Not set: ${key}`);
-        if (globals(self).json) return json(value);
-        out(typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value));
+        // `ppr config get ai` prints a whole section, so redaction has to reach
+        // inside one as well as cover a single value.
+        const shown = redactValue(key, value);
+        if (globals(self).json) return json(shown);
+        out(typeof shown === 'object' ? JSON.stringify(shown, null, 2) : String(shown));
       }),
     );
 
@@ -135,20 +136,6 @@ export function configCommand(): Command {
     });
 
   return cmd;
-}
-
-/** Keeps written config files to what the user actually changed. */
-function pruneDefaults(merged: Config, layer: Record<string, unknown>, key: string): Record<string, unknown> {
-  const out: Record<string, unknown> = structuredClone(layer);
-  const keys = key.split('.');
-  const leaf = keys.pop()!;
-  let node = out;
-  for (const k of keys) {
-    if (typeof node[k] !== 'object' || node[k] === null) node[k] = {};
-    node = node[k] as Record<string, unknown>;
-  }
-  node[leaf] = getPath(merged, key);
-  return out;
 }
 
 const PROVIDER_HELP: Record<string, string> = {
@@ -196,6 +183,34 @@ function unreachable(err: unknown, provider: string, model: string): PprError {
   return new PprError('EAI', message, TEST_HINT);
 }
 
+/** A key pasted where a variable name belongs — the mistake everyone makes once. */
+const pastedKey = (ai: AIConfig): string | undefined =>
+  ai.apiKeyEnv && looksLikeSecret(ai.apiKeyEnv) ? ai.apiKeyEnv : undefined;
+
+/**
+ * The `ai status --json` payload, assembled where a test can read it.
+ *
+ * It carries the `ai` and `transcribe` sections verbatim, which is exactly the
+ * shape of the problem this exists to solve: whatever a config file happens to
+ * hold ends up on stdout. Both sections go through `redactValue` first.
+ */
+export function aiStatusJson(
+  config: Pick<Config, 'ai' | 'transcribe'>,
+  key: { env?: string; source?: string },
+  enabled: boolean,
+): Record<string, unknown> {
+  const pasted = pastedKey(config.ai);
+  return {
+    ai: redactValue('ai', config.ai),
+    transcribe: redactValue('transcribe', config.transcribe),
+    keyEnv: key.env,
+    keyAvailable: Boolean(key.source),
+    keySource: key.source,
+    ...(pasted ? { problem: 'ai.apiKeyEnv holds a key, not a variable name' } : {}),
+    enabled,
+  };
+}
+
 export function aiCommand(): Command {
   const cmd = new Command('ai').description('configure and test the model backend');
 
@@ -206,7 +221,7 @@ export function aiCommand(): Command {
       withVault(self, async (vault) => {
         const { ai, transcribe } = vault.config;
         const secrets = await loadSecrets();
-        const pasted = ai.apiKeyEnv && looksLikeSecret(ai.apiKeyEnv) ? ai.apiKeyEnv : undefined;
+        const pasted = pastedKey(ai);
         const keyName = keyEnvFor(ai);
         // Which of the two places won matters when you are debugging a stale key,
         // and `hasKey` alone cannot tell you.
@@ -219,15 +234,7 @@ export function aiCommand(): Command {
               : undefined;
 
         if (globals(self).json) {
-          return json({
-            ai,
-            transcribe,
-            keyEnv: keyName,
-            keyAvailable: Boolean(source),
-            keySource: source,
-            ...(pasted ? { problem: 'ai.apiKeyEnv holds a key, not a variable name' } : {}),
-            enabled: vault.hasAI,
-          });
+          return json(aiStatusJson({ ai, transcribe }, { env: keyName, source }, vault.hasAI));
         }
         out(
           table([
@@ -345,7 +352,20 @@ export function aiCommand(): Command {
     .command('key')
     .description('store an API key outside the vault and outside your config')
     .argument('[env-var]', 'variable name; worked out from your backend when omitted')
-    .argument('[value]', 'the key itself; omit to be prompted')
+    .argument('[value]', 'the key itself; omit it and ppr asks, which is the safer way')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  ppr ai key                             asks, and works out the variable
+  ppr ai key OPENROUTER_API_KEY          asks, and stores it under that name
+  ppr ai key OPENROUTER_API_KEY "$KEY"   for scripts — see below
+
+Prefer the form that asks. A key typed on the command line is written to your
+shell history and is readable in the process table by anyone else on the
+machine, so it has leaked before ppr has seen it. The positional value stays
+for scripts, where the key comes from somewhere that already holds it.`,
+    )
     .action(async (first: string | undefined, second: string | undefined, _flags: unknown, self: Command) => {
       refuseDryRun('ppr ai key', 'A key is stored outside the vault, in a 0600 file.');
       const g = globals(self);
@@ -363,7 +383,7 @@ export function aiCommand(): Command {
         throw new PprError(
           'ECONFIG',
           `The ${config.ai.provider} backend does not use an API key`,
-          'Run `ppr ai setup` to pick one that does, or name the variable yourself: ppr ai key NAME <value>',
+          'Run `ppr ai setup` to pick one that does, or name the variable yourself: `ppr ai key NAME`, which then asks for the value.',
         );
       }
 

@@ -429,16 +429,48 @@ function guardSecret(path: string, raw: string): void {
   if (KEY_VALUE_PATHS.has(path)) {
     throw invalid(
       `There is no ${path} setting — an API key never goes in a config file`,
-      'Run `ppr ai key <value>` instead. It stores the key at mode 0600, outside the vault.',
+      'Run `ppr ai key` instead: it prompts, and stores the key at mode 0600 outside the vault. Passing the value on the command line records it in your shell history.',
     );
   }
   if (path.endsWith('.apiKeyEnv') && raw && looksLikeSecret(raw)) {
     throw invalid(
       `${path} takes the name of an environment variable, not the key itself`,
-      'Run `ppr ai key <value>` — it stores the key and points this at the right name.',
+      'Run `ppr ai key` — it prompts for the key, stores it, and points this at the right name. Passing the value on the command line records it in your shell history.',
     );
   }
 }
+
+/**
+ * A config value on its way to a terminal or a `--json` payload.
+ *
+ * `guardSecret` only ever sees a `ppr config set`. A key that arrived any
+ * other way — a hand-edited file, a vault layer, a write from before that
+ * guard existed — is sitting in the merged config, and `config list`,
+ * `config get`, and `ai status --json` would read it straight back out. I7 is
+ * "every path that touches it refuses to", and this is the way out.
+ *
+ * Judged exactly as `guardSecret` judges a write and no wider: the key *names*
+ * a secret, or it takes a variable *name* (`…Env`) and is holding something
+ * that plainly is not one. `looksLikeSecret` cannot be applied to every value
+ * here — it answers "is this an environment variable name?", so it calls
+ * `gpt-4o-mini`, every endpoint and every model path a secret too, and a
+ * `config list` that hid your model id would be useless for the one thing
+ * anybody runs it for.
+ */
+export function redactValue(path: string, value: unknown): unknown {
+  if (isPlainObject(value)) {
+    const out: Json = {};
+    for (const [k, v] of Object.entries(value)) out[k] = redactValue(path ? `${path}.${k}` : k, v);
+    return out;
+  }
+  if (typeof value !== 'string' || !value) return value;
+  const names = SECRET_KEY.test(`.${path}`);
+  const pasted = path.endsWith('Env') && looksLikeSecret(value);
+  return names || pasted ? redactSecret(value) : value;
+}
+
+/** The whole effective config, safe to print. */
+export const redactConfig = (config: Config): Config => redactValue('', config) as Config;
 
 function coerce(raw: string, current: unknown): unknown {
   if (raw === 'null' || raw === '') return undefined;

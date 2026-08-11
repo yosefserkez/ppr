@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { EVENT_NAMES } from '@ppr/core';
+import { EVENT_NAMES, redactValue, type Config } from '@ppr/core';
 import { findVault, loadConfig } from '@ppr/core/node';
 import { globals } from '../context.js';
 import { commandProgram, resolveCommand, scanExternals } from '../external.js';
@@ -52,7 +52,7 @@ and \`plugins.<name>.<key>\` for settings ppr never validates.
         events: eventRows(await loadHooks()),
         intents: intentRows(),
         commands: scanExternals().map((cmd) => ({ word: cmd.word, name: cmd.name, path: cmd.path })),
-        settings: config.plugins ?? {},
+        settings: pluginSettings(config),
       };
       if (g.json) return json(report);
 
@@ -77,15 +77,39 @@ and \`plugins.<name>.<key>\` for settings ppr never validates.
           ])
         : [['', color.dim('No `ppr-*` on your PATH. Any executable so named is a subcommand.')]]);
 
-      const settings = Object.entries(report.settings).flatMap(([name, values]) =>
-        Object.entries(values as Record<string, unknown>).map(
-          ([key, value]): [string, string] => [`plugins.${name}.${key}`, String(value)],
-        ),
-      );
+      const settings = settingRows(report.settings);
       section('Settings', settings.length
         ? settings
         : [['', color.dim('No `plugins.<name>` sections. Anything under that key is yours.')]]);
     });
+}
+
+/**
+ * The `plugins.*` sections, redacted once, before either renderer sees them.
+ *
+ * This is the namespace `redactValue`'s own note is about: nothing validates a
+ * key under `plugins.`, and it merges up from the vault layer, which is assumed
+ * to be in git (I7). `config list` had already been taught to hide
+ * `plugins.todoist.token`; this report was still printing it in full, in both
+ * the table and `--json`.
+ *
+ * Redacting here rather than at the two places it is printed is deliberate: the
+ * rows are built *from* this payload, so one pass covers both, and there is
+ * still exactly one rule about what a config value may look like on the way out.
+ */
+export function pluginSettings(config: Config): Record<string, Record<string, unknown>> {
+  return redactValue('plugins', config.plugins ?? {}) as Record<string, Record<string, unknown>>;
+}
+
+/** The Settings section, out here so what it prints can be tested without a binary. */
+export function settingRows(
+  settings: Record<string, Record<string, unknown>>,
+): Array<[string, string]> {
+  return Object.entries(settings).flatMap(([name, values]) =>
+    Object.entries(values).map(
+      ([key, value]): [string, string] => [`plugins.${name}.${key}`, String(value)],
+    ),
+  );
 }
 
 const mark = (path: string | null): string => (path ? color.green('✓') : color.yellow('!'));
