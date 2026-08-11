@@ -27,7 +27,7 @@
     "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test \"test/*.test.js\""
+    "test": "tsc -p tsconfig.json && node --test \"test/*.test.js\""
   },
   "dependencies": {
     "@ppr/core": "workspace:*",
