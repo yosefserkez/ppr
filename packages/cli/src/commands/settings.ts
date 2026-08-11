@@ -5,6 +5,7 @@ import {
   PprError,
   flattenConfig,
   getPath,
+  guardVaultScope,
   keyEnvFor,
   looksLikeSecret,
   mergeConfig,
@@ -112,6 +113,9 @@ export function configCommand(): Command {
     .option('-l, --local', 'write to this vault only, not the global config')
     .action(async (key: string, value: string, flags: { local?: boolean }, self: Command) => {
       const g = globals(self);
+      // The vault layer may not name a program or an endpoint (I7) — refuse
+      // here rather than write a key `loadConfig` would then throw away.
+      if (flags.local) guardVaultScope(key, value);
       const found = findVault(g.vault ? { explicit: g.vault } : {});
       const written = await writeSetting(found.root, key, value, flags);
 

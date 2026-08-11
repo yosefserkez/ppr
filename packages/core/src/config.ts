@@ -229,6 +229,12 @@ function deepMerge(base: Json, override: Json): Json {
   const out: Json = { ...base };
   for (const [k, v] of Object.entries(override)) {
     if (v === undefined) continue;
+    // `JSON.parse` produces a real own `__proto__` key, and assigning one walks
+    // into `Object.prototype`'s setter — so a config file could arrive through
+    // the prototype instead, past every guard that works by deleting a key
+    // (`hooks` here, `VAULT_FORBIDDEN_PATHS` in `loadConfig`). No config key is
+    // ever spelled this way, so refusing all three costs nothing.
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
     const prev = out[k];
     out[k] = isPlainObject(v) && isPlainObject(prev) ? deepMerge(prev, v) : v;
   }
@@ -312,6 +318,80 @@ function guardHooks(path: string): void {
   throw invalid(
     'Hooks are not settable with `ppr config set`',
     'They run shell commands, so ppr reads them only from ~/.config/ppr/config.json — edit that file.',
+  );
+}
+
+/**
+ * Keys that name a program to run, or an endpoint to send your key to.
+ *
+ * They describe the machine, not the notes — and the vault layer wins every
+ * merge, so honouring one from `<vault>/.ppr/config.json` means `git clone`
+ * followed by any command that reaches a model runs a stranger's shell or
+ * posts your API key to their host. That is `hooks`' danger exactly (see
+ * `guardHooks`), so it gets `hooks`' answer: the global layer keeps them, the
+ * vault layer never sets them. Anything new that spawns or dials out belongs
+ * on this list in the same commit that adds it.
+ *
+ * Enforced on the way in by `loadConfig`, which strips these from the vault
+ * layer before the merge, and on the way out by `guardVaultScope`.
+ */
+export const VAULT_FORBIDDEN_PATHS = [
+  'ai.command',
+  'ai.baseUrl',
+  'ai.apiKeyEnv',
+  'transcribe.command',
+  'transcribe.binary',
+  'transcribe.baseUrl',
+  'transcribe.apiKeyEnv',
+] as const;
+
+const VAULT_FORBIDDEN = new Set<string>(VAULT_FORBIDDEN_PATHS);
+
+/**
+ * Provider values that resolve to a program on this machine rather than a URL.
+ *
+ * Fencing the key that *names* the program is only half of it: a vault that
+ * could still switch the provider would run whatever the machine's own
+ * `ai.command`, `transcribe.command`, or `transcribe.binary` already says —
+ * the same `git clone && ppr voice` that `VAULT_FORBIDDEN_PATHS` exists to
+ * stop. One list drives both halves of the fence, so a new provider that
+ * shells out is added here and nowhere else.
+ */
+export const VAULT_FORBIDDEN_PROVIDERS: Readonly<Record<string, readonly string[]>> = {
+  'ai.provider': ['command'],
+  // `whisper-cpp` shells out too — to `transcribe.binary`, or to whatever
+  // `whisper-cli` is on PATH when that key is unset.
+  'transcribe.provider': ['whisper-cpp', 'command'],
+};
+
+/**
+ * Whether a provider value would hand the vault layer a program to run.
+ *
+ * Compares *trimmed*, because `validateConfig` trims after the merge: without
+ * it a single trailing space walked past the load-time fence and arrived as
+ * `command`, while the write-time guard refused the same string. Both halves
+ * ask this function so they cannot disagree again.
+ */
+export function isShellProvider(path: string, value: unknown): boolean {
+  const shells = VAULT_FORBIDDEN_PROVIDERS[path];
+  if (!shells || typeof value !== 'string') return false;
+  return shells.includes(value.trim());
+}
+
+/**
+ * `ppr config set --local` refusing what `loadConfig` would throw away anyway.
+ *
+ * Writing the key and silently ignoring it afterwards reads as a bug and
+ * teaches nothing; saying so names the file that does honour it. A `provider`
+ * key is on the list only for the values that turn a vault into a shell —
+ * pinning `ollama` or `openai` for one vault stays allowed.
+ */
+export function guardVaultScope(path: string, raw?: string): void {
+  const forbidden = VAULT_FORBIDDEN.has(path) || isShellProvider(path, raw);
+  if (!forbidden) return;
+  throw invalid(
+    `${path} cannot be set for one vault`,
+    'It names a program to run or an endpoint to send your key to, so ppr reads it only from ~/.config/ppr/config.json — drop --local.',
   );
 }
 

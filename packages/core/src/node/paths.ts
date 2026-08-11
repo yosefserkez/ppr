@@ -2,7 +2,15 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { DEFAULT_CONFIG, mergeConfig, validateConfig, type Config } from '../config.js';
+import {
+  DEFAULT_CONFIG,
+  VAULT_FORBIDDEN_PATHS,
+  VAULT_FORBIDDEN_PROVIDERS,
+  isShellProvider,
+  mergeConfig,
+  validateConfig,
+  type Config,
+} from '../config.js';
 
 export const VAULT_MARKER = '.ppr';
 export const VAULT_CONFIG = `${VAULT_MARKER}/config.json`;
@@ -98,13 +106,69 @@ async function readJson(path: string): Promise<Record<string, unknown>> {
   }
 }
 
-/** Defaults < global config < vault config. Later wins, key by key. */
+const asObject = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+/**
+ * Walks to the object holding a dotted key's leaf, or `undefined` when nothing
+ * on the way is a plain object — a layer that spells `ai` as a string or an
+ * array has no such key to read or remove, and `validateConfig` rejects what it
+ * does have.
+ */
+function parentOf(
+  layer: Record<string, unknown>,
+  path: string,
+): { node: Record<string, unknown>; leaf: string } | undefined {
+  const keys = path.split('.');
+  const leaf = keys.pop();
+  if (!leaf) return undefined;
+  let node = layer;
+  for (const key of keys) {
+    const next = asObject(node[key]);
+    if (!next) return undefined;
+    node = next;
+  }
+  return { node, leaf };
+}
+
+/** Removes one dotted key from a raw layer, leaving its parents in place. */
+function deletePath(layer: Record<string, unknown>, path: string): void {
+  const found = parentOf(layer, path);
+  if (found) delete found.node[found.leaf];
+}
+
+/**
+ * Everything the vault layer is not allowed to say, dropped before the merge.
+ *
+ * See `VAULT_FORBIDDEN_PATHS`. The layer is a fresh object per load, so this
+ * edits it in place; the global layer goes through untouched, because on your
+ * own machine these keys are exactly how you configure ppr.
+ */
+function fenceVaultLayer(local: Record<string, unknown>): Record<string, unknown> {
+  for (const path of VAULT_FORBIDDEN_PATHS) deletePath(local, path);
+  // Stripping `ai.command` is not enough on its own: a vault that could still
+  // *switch* to a provider that shells out would run whatever the machine's own
+  // command or binary happens to be. Whatever provider was already chosen stays.
+  for (const path of Object.keys(VAULT_FORBIDDEN_PROVIDERS)) {
+    const found = parentOf(local, path);
+    if (found && isShellProvider(path, found.node[found.leaf])) delete found.node[found.leaf];
+  }
+  return local;
+}
+
+/**
+ * Defaults < global config < vault config. Later wins, key by key — except for
+ * the keys that name a program or an endpoint, which the vault layer does not
+ * get to set at all (`fenceVaultLayer`).
+ */
 export async function loadConfig(root: string, env: Env = process.env): Promise<Config> {
   const [global, local] = await Promise.all([
     readJson(globalConfigPath(env)),
     readJson(join(root, VAULT_CONFIG)),
   ]);
-  return validateConfig(mergeConfig(structuredClone(DEFAULT_CONFIG), global, local));
+  return validateConfig(mergeConfig(structuredClone(DEFAULT_CONFIG), global, fenceVaultLayer(local)));
 }
 
 /** Reads back only what that file declares, so saving does not inline defaults. */
