@@ -254,7 +254,7 @@ export function getPath(config: Config, path: string): unknown {
  * so `ppr config set display.color false` does not store the string "false".
  */
 export function setPath(config: Config, path: string, raw: string): Config {
-  guardHooks(path);
+  guardUserOnly(path);
   guardSecret(path, raw);
   const keys = path.split('.');
   const leaf = keys.pop();
@@ -304,20 +304,46 @@ const KEY_VALUE_PATHS = new Set([
 ]);
 
 /**
- * `hooks` is not a config key, and this is where that is said out loud.
+ * The tables that name a program ppr will run. Not config keys, and not fields
+ * on `Config` — see `validateConfig` and `cli/src/hooks.ts`.
  *
- * It is a list of shell commands, and config merges the vault layer over the
- * user's — so a `hooks` block anywhere near this type would mean cloning
- * somebody's vault and typing `ppr ls` runs their shell. It is read from
- * `~/.config/ppr/config.json` alone, by the CLI, and `--local` has to be
- * impossible rather than discouraged. Editing that file by hand is the whole
- * interface; refusing here is how someone finds that out.
+ * `hooks` maps an event to commands; `porcelain` maps an intent (`notify`,
+ * `reminders-push`) to the command line `--notify` / `--push` should run. Both
+ * are lists of programs to execute, and config merges the vault layer over the
+ * user's — so either one anywhere near this type would mean cloning somebody's
+ * vault and typing `ppr ls` runs their shell. Both are read from
+ * `~/.config/ppr/config.json` alone, by the CLI.
+ *
+ * One list and one guard on purpose: a second guard is a second thing to
+ * forget, and the next table of commands belongs here in the commit that adds
+ * it.
  */
-function guardHooks(path: string): void {
-  if (path !== 'hooks' && !path.startsWith('hooks.')) return;
+export const USER_ONLY_KEYS = ['hooks', 'porcelain'] as const;
+
+/**
+ * Keyed by the list itself, so "one list" is true rather than nearly true: a
+ * table added to `USER_ONLY_KEYS` with no label here is a compile error, where
+ * a `Record<string, string>` compiled clean and told whoever hit the guard that
+ * "undefined are not settable with `ppr config set`".
+ */
+const USER_ONLY_LABEL: Record<(typeof USER_ONLY_KEYS)[number], string> = {
+  hooks: 'Hooks',
+  porcelain: 'Porcelain bindings',
+};
+
+/**
+ * Where "not a config key" is said out loud.
+ *
+ * `--local` has to be impossible rather than discouraged, so this refuses at
+ * every scope. Editing the global file by hand is the whole interface; refusing
+ * here is how someone finds that out.
+ */
+function guardUserOnly(path: string): void {
+  const key = USER_ONLY_KEYS.find((k) => path === k || path.startsWith(`${k}.`));
+  if (!key) return;
   throw invalid(
-    'Hooks are not settable with `ppr config set`',
-    'They run shell commands, so ppr reads them only from ~/.config/ppr/config.json — edit that file.',
+    `${USER_ONLY_LABEL[key]} are not settable with \`ppr config set\``,
+    'They name a program ppr will run, so ppr reads them only from ~/.config/ppr/config.json — edit that file.',
   );
 }
 
@@ -328,7 +354,7 @@ function guardHooks(path: string): void {
  * merge, so honouring one from `<vault>/.ppr/config.json` means `git clone`
  * followed by any command that reaches a model runs a stranger's shell or
  * posts your API key to their host. That is `hooks`' danger exactly (see
- * `guardHooks`), so it gets `hooks`' answer: the global layer keeps them, the
+ * `guardUserOnly`), so it gets `hooks`' answer: the global layer keeps them, the
  * vault layer never sets them. Anything new that spawns or dials out belongs
  * on this list in the same commit that adds it.
  *
@@ -502,10 +528,14 @@ function trimStrings(node: Json): void {
 
 export function validateConfig(config: Config): Config {
   trimStrings(config as unknown as Json);
-  // A `hooks` block that arrived through a merge is dropped here, so no code
-  // downstream can find one to honour. The vault layer wins every other key
-  // by design, and a vault is a repo people clone — see `cli/src/hooks.ts`.
-  delete (config as unknown as Json).hooks;
+  // A `hooks` or `porcelain` block that arrived through a merge is dropped
+  // here, so no code downstream can find one to honour: both are tables of
+  // programs to run, and one of them arriving from a vault is `git clone`
+  // followed by `ppr ls` executing a stranger's shell. The vault layer wins
+  // every other key by design, and a vault is a repo people clone — see
+  // `cli/src/hooks.ts` for the rule and `cli/src/porcelain.ts` for the
+  // second table that carries it.
+  for (const key of USER_ONLY_KEYS) delete (config as unknown as Json)[key];
   if (config.capture.compose !== 'editor' && config.capture.compose !== 'inline') {
     throw invalid(
       `Unknown compose mode: ${config.capture.compose}`,

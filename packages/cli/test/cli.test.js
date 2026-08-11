@@ -1888,3 +1888,125 @@ test('a capture that is being parsed is never chatted to', async () => {
     assert.match(quiet.stdout.trim(), /^\w{16}$/);
   });
 });
+
+/**
+ * A `porcelain` binding: what `--notify` and `--push` mean when a name on PATH
+ * is not enough. The security half is the same claim as the hooks tests above
+ * and is asserted the same way — whether a *vault* may say which program runs
+ * is a fact about a whole run, so it lives out here rather than in a unit test.
+ */
+test('a binding says what --notify means, and a vault never gets to', async () => {
+  await withVault(async (dir) => {
+    const seen = join(dir, 'bound.txt');
+    const conventional = join(dir, 'convention-ran');
+    await writeScript(dir, 'my-notifier', `printf '%s\\n' "$@" > "${seen}"\ncat >> "${seen}"`);
+    // The conventional name, sitting right there on PATH. A binding has to win
+    // over it, or it has not solved the thing it exists for: saying what
+    // `--notify` means without owning a name and winning PATH order.
+    await writeScript(dir, 'ppr-notify', `touch "${conventional}"`);
+    const env = { PATH: testPath(join(dir, 'bin')) };
+    const binding = { notify: `"${join(dir, 'bin', 'my-notifier')}" --urgent` };
+
+    await ppr(dir, ['remind', 'tomorrow', 'call the dentist']);
+    await writeUserConfig(dir, { porcelain: binding });
+
+    const notified = await ppr(dir, ['brief', '--notify'], { env });
+    assert.equal(notified.code, 0);
+    assert.equal(existsSync(conventional), false, 'a binding wins over the name on PATH');
+
+    // Same contract as `ppr-notify`, to the argument: the binding's own
+    // arguments, then --title, then the title, and the body on stdin. Anything
+    // else and a published plugin would break the moment somebody bound it.
+    const recorded = await readFile(seen, 'utf8');
+    assert.match(recorded, /^--urgent\n--title\nppr · call the dentist\n/);
+    assert.match(recorded, /—/, 'the body still arrives on stdin');
+    // I10: a notification is a side effect either way.
+    assert.equal(notified.stdout, (await ppr(dir, ['brief'])).stdout);
+
+    // The same block, moved into the vault — the shape of a cloned repo, and
+    // the layer that wins every ordinary key. It is not honoured, and the
+    // convention answers instead, so what is asserted is the layer and not a
+    // broken fixture.
+    await writeUserConfig(dir, {});
+    await writeFile(join(dir, '.ppr', 'config.json'), JSON.stringify({ porcelain: binding }));
+    const cloned = await ppr(dir, ['brief', '--notify'], { env });
+    assert.equal(cloned.code, 0);
+    assert.equal(existsSync(conventional), true, 'a vault cannot redirect a flag at its own program');
+
+    // Not merged into the config either, so nothing downstream can find one.
+    const config = JSON.parse((await ppr(dir, ['config', 'list', '--json'])).stdout);
+    assert.equal(config.porcelain, undefined);
+
+    // And `config set` sends people to the file that is honoured, at any scope.
+    for (const args of [
+      ['config', 'set', 'porcelain.notify', 'my-notifier'],
+      ['config', 'set', '--local', 'porcelain.notify', 'my-notifier'],
+    ]) {
+      const set = await ppr(dir, args);
+      assert.equal(set.code, 2);
+      assert.match(set.stderr, /~\/\.config\/ppr\/config\.json/);
+    }
+  });
+});
+
+test('a bound push is a push, and gets the event a hook would get', async () => {
+  await withVault(async (dir) => {
+    const seen = join(dir, 'pushed.json');
+    await writeScript(dir, 'todoist-add', `cat > "${seen}"\necho "$PPR_EVENT|$PPR_VAULT" > "${seen}.env"`);
+    // Nothing called `ppr-reminders-push` anywhere: the binding is the only
+    // reason this can work at all.
+    const env = { PATH: testPath(join(dir, 'bin')) };
+    await writeUserConfig(dir, {
+      porcelain: { 'reminders-push': `${join(dir, 'bin', 'todoist-add')} --project Inbox` },
+    });
+
+    const { code, stderr } = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
+    assert.equal(code, 0);
+    // `pushDecision` has to see a binding as available, or this would say
+    // "nothing installed" with the binding sitting right there.
+    assert.doesNotMatch(stderr, /Nothing called/);
+    assert.match(stderr, /→ .*todoist-add --project Inbox/, 'and it said where the copy went');
+
+    const event = JSON.parse(await readFile(seen, 'utf8'));
+    assert.equal(event.event, 'entry.created');
+    assert.equal(event.entry.kind, 'reminder');
+    assert.equal(event.vault, dir);
+    assert.equal((await readFile(`${seen}.env`, 'utf8')).trim(), `entry.created|${dir}`);
+  });
+});
+
+test('`ppr plugins` reports a binding, and whether the program at its front is there', async () => {
+  await withVault(async (dir) => {
+    await writeScript(dir, 'my-notifier', 'exit 0');
+    const env = { PATH: testPath(join(dir, 'bin')) };
+    await writeUserConfig(dir, {
+      porcelain: {
+        notify: `${join(dir, 'bin', 'my-notifier')} --urgent`,
+        // A typo in a file. The report has to show it as one.
+        'reminders-push': 'todoist-add --project Inbox',
+      },
+    });
+
+    const report = JSON.parse((await ppr(dir, ['plugins', '--json'], { env })).stdout);
+    const notify = report.intents.find((i) => i.flag === 'brief --notify');
+    assert.equal(notify.intent, 'notify');
+    assert.equal(notify.bound, `${join(dir, 'bin', 'my-notifier')} --urgent`);
+    assert.equal(notify.tool, notify.bound, 'the command line is what runs');
+    assert.equal(notify.path, join(dir, 'bin', 'my-notifier'), 'resolved from the program at its front');
+
+    const push = report.intents.find((i) => i.flag === 'remind --push');
+    assert.equal(push.bound, 'todoist-add --project Inbox');
+    assert.equal(push.path, null, 'and a report that claimed it was there would be worse than none');
+
+    const table = (await ppr(dir, ['plugins'], { env })).stdout;
+    assert.match(table, /porcelain\.notify → /);
+
+    // The other half of the same fact: what a person is told when the binding
+    // names something that is not there. A typo in a file, said as one.
+    const broken = await ppr(dir, ['remind', 'tomorrow', 'call the dentist', '--push'], { env });
+    assert.match(broken.stderr, /porcelain\.reminders-push is set to/);
+    assert.match(broken.stderr, /nothing called todoist-add to run/);
+    assert.match(broken.stderr, /entry is in your vault/i);
+    assert.equal(JSON.parse((await ppr(dir, ['ls', '--json'])).stdout).length, 1);
+  });
+});

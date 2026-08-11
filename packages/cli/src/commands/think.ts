@@ -222,8 +222,13 @@ exactly what it printed before. Nothing upcoming sends nothing — a daily
 "nothing coming up" ping is how notifications stop being read.
 
 The program ppr ships posts a macOS banner; swap it for one that talks to ntfy
-or a lamp and --notify means that instead. The plain pipe does the same job
-with no flag at all:  ppr brief --plain | ppr-notify`,
+or a lamp and --notify means that instead. To point the flag at a command line
+without owning the name, put one in ~/.config/ppr/config.json:
+
+  "porcelain": { "notify": "/opt/my-notifier --urgent" }
+
+The plain pipe does the same job with no flag at all:
+  ppr brief --plain | ppr-notify`,
     )
     .action(async (flags: { within?: string; plain?: boolean; notify?: boolean }, self: Command) =>
       withVault(self, async (vault) => {

@@ -76,18 +76,11 @@ export interface ChildResult {
   hint?: string;
 }
 
-export interface ChildOptions {
-  args?: string[];
+interface CommonOptions {
   /** Written to the child's stdin, then closed. */
   input?: string;
   /** Added to the inherited environment. */
   env?: Record<string, string>;
-  /**
-   * Run the command through `sh -c`, so a configured string can carry its own
-   * arguments and pipes. Only for commands that came from the user's own
-   * config file — never for anything read out of a vault (see `hooks.ts`).
-   */
-  shell?: boolean;
   /**
    * What to call this in a `--dry-run` plan, when the command alone does not
    * say enough — a hook is worth naming with the event that would have fired
@@ -95,6 +88,33 @@ export interface ChildOptions {
    */
   because?: string;
 }
+
+/**
+ * Argv or a shell line, never both — and that is a type rather than a check.
+ *
+ * `spawn(cmd, args, { shell: true })` does not pass argv to the program: it
+ * **appends the arguments to the command string**, unquoted, and hands the lot
+ * to `sh -c`. So one `args` entry alongside `shell: true` turns every value in
+ * it into shell source, and the values ppr has to pass are titles out of
+ * somebody's own notes — `foo; rm -rf ~` is a legal note title. Making the
+ * combination unrepresentable is cheaper than remembering to quote, and it
+ * cannot be forgotten by the next caller.
+ *
+ * `shell: true` therefore means "a whole command line, from the user's own
+ * config file, with no arguments of ppr's added to it" (see `hooks.ts`), and
+ * anything ppr needs to hand over goes on stdin or in the environment.
+ */
+export type ChildOptions = CommonOptions &
+  (
+    | {
+        shell?: false;
+        args?: string[];
+      }
+    | {
+        shell: true;
+        args?: never;
+      }
+  );
 
 const running = new Map<ChildProcess, Promise<ChildResult>>();
 

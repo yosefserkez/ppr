@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseReminder, truncate, PprError, type Entry, type Vault } from '@ppr/core';
 import { analyzeWav, micPermission, record, responsibleApp, which } from '@ppr/core/node';
-import { canPush, handToReminders, pushDecision } from '../porcelain.js';
+import { canPush, handToReminders, porcelainFor, pushDecision, PUSH_INTENT } from '../porcelain.js';
 import { dayFlag, globals, withVault } from '../context.js';
 import { confirm, editorName, hasStdin, openEditor, promptLine, promptMultiline, resolveText } from '../input.js';
 import { color, entryDetail, entryJson, json, out, errline, shortId } from '../render.js';
@@ -217,6 +217,11 @@ export async function remind(
   const text = parsed.text || body;
   const date = stated ?? parsed.date;
 
+  // Resolved once and passed on, so the reason the user is given and the
+  // program that runs come from one lookup — a `porcelain.reminders-push`
+  // binding has to count as available or `--push` would report "nothing
+  // installed" with a binding sitting right there.
+  const push = await porcelainFor(PUSH_INTENT);
   // Decided once, here, for the same reason the whole function exists: this is
   // also the path `ppr "remind me …"` takes, and a second copy of the rule is
   // a second answer waiting to happen (L18).
@@ -224,7 +229,7 @@ export async function remind(
     configured: vault.config.remind.push,
     ...(flags.push !== undefined ? { asked: flags.push } : {}),
     dated: Boolean(date),
-    available: canPush(),
+    available: canPush(push),
   });
 
   if (!date) {
@@ -249,7 +254,7 @@ export async function remind(
   // Last, and unable to undo anything before it: the markdown is already on
   // disk, so a plugin that fails costs a copy in another app and never the
   // entry (I2's shape).
-  await handToReminders(vault, saved, decision);
+  await handToReminders(vault, saved, decision, push);
   return saved;
 }
 

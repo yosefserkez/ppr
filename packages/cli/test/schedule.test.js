@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAbsolute } from 'node:path';
+import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   crontabLine,
   jobArgv,
@@ -10,6 +14,50 @@ import {
   programArgumentsFrom,
   shellCommand,
 } from '../dist/schedule.js';
+
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
+
+/**
+ * The real binary, against throwaway directories.
+ *
+ * `PPR_DIR` and `XDG_CONFIG_HOME` both point inside the temp dir, so nothing
+ * here can read or write the developer's own vault or config — the rule every
+ * test that spawns ppr follows.
+ */
+function ppr(dir, args) {
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [BIN, ...args], {
+      env: {
+        ...process.env,
+        PPR_DIR: dir,
+        XDG_CONFIG_HOME: join(dir, '.xdg'),
+        PPR_NO_AI: '1',
+        NO_COLOR: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('close', (code) => done({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+/** A `porcelain.notify` binding in the one file a binding may come from. */
+async function withBinding(binding, fn) {
+  const dir = await mkdtemp(join(tmpdir(), 'ppr-schedule-'));
+  try {
+    await mkdir(join(dir, '.xdg', 'ppr'), { recursive: true });
+    await writeFile(
+      join(dir, '.xdg', 'ppr', 'config.json'),
+      `${JSON.stringify({ porcelain: { notify: binding } }, null, 2)}\n`,
+    );
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 test('a time of day is parsed or refused, never guessed', () => {
   assert.deepEqual(parseAt('08:00'), { hour: 8, minute: 0 });
@@ -31,6 +79,78 @@ test('a scheduled job is an ordinary ppr command', () => {
     jobArgv({ job: 'brief', at: '08:00', vault: '~/notes' }, '/usr/bin/node', '/repo/dist/index.js'),
     ['/usr/bin/node', '/repo/dist/index.js', '--vault', '~/notes', 'brief', '--plain'],
   );
+});
+
+test('a scheduled --notify is the job announcing itself, not a pipeline', () => {
+  const schedule = { job: 'brief', at: '08:00', notify: true };
+  const argv = jobArgv(schedule, '/usr/bin/node', '/repo/dist/index.js');
+
+  // What runs at 8am is ppr, so what `--notify` means is resolved at 8am too —
+  // by that ppr, as argv, through the one path the terminal flag uses.
+  assert.deepEqual(argv, ['/usr/bin/node', '/repo/dist/index.js', 'brief', '--plain', '--notify']);
+
+  // And with nothing to pipe into, there is no shell anywhere for a resolved
+  // command line to have been spliced into.
+  const xml = plist(schedule, argv);
+  assert.doesNotMatch(xml, /\/bin\/sh/);
+  assert.deepEqual(programArgumentsFrom(xml), argv);
+  assert.equal(
+    crontabLine(schedule, argv),
+    '0 8 * * * /usr/bin/node /repo/dist/index.js brief --plain --notify',
+  );
+});
+
+test('a porcelain binding never reaches the scheduled command line', async () => {
+  // A binding is a *command line*. Written into the schedule it would be
+  // spliced into the `/bin/sh -c` a piped job is handed, where `|` becomes a
+  // real pipe and `$HOME` expands at 8am — while the same string at the
+  // terminal is five arguments to one program, which is the rule porcelain.ts
+  // calls non-negotiable. The program at the front is a real one, so the
+  // "nothing to run" note (which quotes the binding on purpose) stays out of
+  // the way of what is being asserted.
+  const binding = '/bin/echo --to $HOME/x | tee /tmp/ppr-schedule-leak';
+  const traces = ['/bin/echo', '$HOME', 'tee', 'ppr-schedule-leak', '|'];
+
+  await withBinding(binding, async (dir) => {
+    // `--dry-run`, because the artifact is the claim and installing it would
+    // put a real job on the developer's machine.
+    const brief = await ppr(dir, ['schedule', 'add', 'brief', '--notify', '--dry-run', '--json']);
+    assert.equal(brief.code, 0, brief.stderr);
+
+    const said = `${brief.stdout}\n${brief.stderr}`;
+    for (const trace of traces) {
+      assert.ok(!said.includes(trace), `the binding reached the schedule (${trace}):\n${said}`);
+    }
+
+    if (process.platform === 'darwin') {
+      const plan = JSON.parse(brief.stdout);
+      assert.deepEqual(plan.argv.slice(-3), ['brief', '--plain', '--notify']);
+      assert.equal(plan.notify, true);
+      // Not a pipe, so nothing was snapshotted: rebinding porcelain.notify
+      // tomorrow changes tomorrow's banner, and `ppr plugins` cannot end up
+      // reporting something other than what runs.
+      assert.equal(plan.pipe, undefined);
+      assert.doesNotMatch(brief.stderr, /\/bin\/sh/);
+    } else {
+      // Elsewhere ppr prints the crontab line for the user to place, and it is
+      // the command and nothing else.
+      assert.match(brief.stdout.trim(), / brief --plain --notify$/);
+    }
+
+    // `memory learn` has no --notify of its own, so a banner there is still a
+    // pipe — and it is the conventional name, looked up on PATH at 3am, never
+    // a binding baked into a shell line.
+    const learn = await ppr(dir, ['schedule', 'add', 'learn', '--notify', '--dry-run', '--json']);
+    assert.equal(learn.code, 0, learn.stderr);
+    const learnSaid = `${learn.stdout}\n${learn.stderr}`;
+    for (const trace of traces.filter((t) => t !== '|')) {
+      assert.ok(!learnSaid.includes(trace), `the binding reached the schedule (${trace}):\n${learnSaid}`);
+    }
+    assert.match(learnSaid, /\| ppr-notify/);
+    if (process.platform === 'darwin') {
+      assert.equal(JSON.parse(learn.stdout).pipe, 'ppr-notify');
+    }
+  });
 });
 
 test('a piped job is one command in cron and a shell in launchd', () => {

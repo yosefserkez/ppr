@@ -155,12 +155,42 @@ compose with pipes.** A read needs no event, because `ppr brief --plain |
 ppr-notify` already works; a write does, because nobody was standing there.
 
 ppr may still ship the batteries. `--notify` and `--push` are real flags with
-real defaults — but a flag names an *intent*, and a conventional program name
-on PATH resolves the *tool*: `--notify` runs whatever `ppr-notify` is,
-`--push` runs whatever `ppr-reminders-push` is. Replace the executable and you
-have rebound the intent, with no ppr release and no config schema. That is the
-same trick as `$EDITOR`, `$PAGER`, and `git foo` → `git-foo`, and it is why
-there is no plugin API to version.
+real defaults — but a flag names an *intent*, and the *tool* is resolved
+outside ppr. A conventional program name on PATH is the default and the cheap
+case: `--notify` runs whatever `ppr-notify` is, `--push` runs whatever
+`ppr-reminders-push` is. Replace the executable and you have rebound the
+intent, with no ppr release at all. That is the same trick as `$EDITOR`,
+`$PAGER`, and `git foo` → `git-foo`, and it is why there is no plugin API to
+version.
+
+The one sentence that trick cannot say is "`--notify` means
+`/opt/my-notifier --urgent`": a name takes no arguments, so the only way to
+add one was a wrapper script called exactly `ppr-notify` that also won PATH
+order. That is a lot of ceremony, and it is *less* than the analogy the design
+rests on already allows — `$EDITOR` is a **command line**, and
+`EDITOR="code --wait"` has worked since long before ppr. So one binding closes
+the gap and nothing else: `porcelain.<intent>` in `~/.config/ppr/config.json`,
+intent → command line, resolved *before* PATH.
+
+    "porcelain": { "notify": "/opt/my-notifier --urgent" }
+
+The intent is the conventional program name minus its `ppr-` — `notify`,
+`reminders-push` — so there is one naming rule, no lookup table, and `ppr
+plugins` can print both halves of a row from one string. There is still
+nothing to register, nothing to version, and nothing ppr calls into; and both
+doors have one contract, because a bound command is a drop-in for the program
+it replaced (same `--title`, same JSON on stdin) and two contracts would break
+every published plugin the moment somebody bound it (L18).
+
+Two things it inherits, both non-negotiable. It is a table of programs to run,
+so it carries `hooks`' security rule **verbatim** — user layer only, enforced
+structurally, see §4. And because ppr appends `--title <the first line of your
+own brief>` to it, a binding is spawned as **argv, never through a shell**:
+`foo; rm -rf ~` is a legal thing to have called a note, and
+`spawn(cmd, args, { shell: true })` does not pass argv — it appends the
+arguments to the command string unquoted. A binding may carry arguments and
+quotes; anybody who wants a pipeline writes a script and binds that, which is
+what `$EDITOR` has always required too.
 
 Everything across that line is one-way and fire-and-forget. The vault write
 happens first and always survives; a consumer that is missing, slow, or broken
@@ -173,7 +203,8 @@ host listens — I8 intact); `cli/src/hooks.ts`, `cli/src/child.ts`,
 nothing from ppr and ppr imports nothing from `plugins/`. Tests: "every write
 says so, and says enough that nobody has to ask", "reads are silent, because a
 read already composes with a pipe", "--push hands the entry to whatever
-`ppr-reminders-push` is", "an unknown word runs `ppr-<word>` from PATH".
+`ppr-reminders-push` is", "an unknown word runs `ppr-<word>` from PATH", "a
+binding says what --notify means, and a vault never gets to".
 
 ---
 
@@ -318,7 +349,8 @@ not the first.
 | **Events** (push) | Your program reacts to a write it did not make | `core/src/events.ts` |
 | **Hooks** | Wiring an event to a command, per user | `ppr hooks add`, over `~/.config/ppr/config.json` |
 | **`ppr-foo` on PATH** | A new *subcommand*, in any language | `cli/src/external.ts` |
-| **Conventional names** | Rebinding what `--notify` / `--push` mean | `cli/src/porcelain.ts` |
+| **Conventional names** | Rebinding what `--notify` / `--push` mean, by owning `ppr-<intent>` on PATH | `cli/src/porcelain.ts` |
+| **`porcelain.<intent>`** | The same, when the tool needs arguments: intent → a whole command line. User layer only | `~/.config/ppr/config.json` |
 | **`plugins.<name>.*`** | Settings for a tool ppr has never heard of | `core/src/config.ts` |
 
 `ppr plugins` is the map of all of it on a given machine — which commands are
@@ -355,6 +387,15 @@ stranger's shell. Git learned this and answered the same way — hooks live in
 field on `Config`, `validateConfig` deletes any that a merge produced, and the
 only reader is `readConfigLayer(globalConfigPath())` in `cli/src/hooks.ts`.
 `ppr config set hooks.…` refuses and names the file.
+
+**`porcelain` is the same rule and the same enforcement**, because it is the
+same dangerous shape: a table saying which program to run, where a
+vault-declared one would mean `git clone && ppr brief --notify` runs a
+stranger's program. One list (`USER_ONLY_KEYS` in `core/src/config.ts`) drives
+the strip and the one guard, because a second guard is a second thing to
+forget; the only reader is `readConfigLayer(globalConfigPath())` in
+`cli/src/porcelain.ts`. Anything new that names a command belongs on that list
+in the commit that adds it.
 
 **One way to run somebody else's program.** `cli/src/child.ts`: stdout
 discarded so a consumer cannot get inside `ppr ls --json` (I10), failures
@@ -539,7 +580,9 @@ Two namespaces break that pattern deliberately. `plugins.<name>.<key>` accepts
 anything, because an unknown key there is the point rather than a typo — and
 secrets are still refused, harder than elsewhere, since plugin settings merge
 through the vault layer and a vault is assumed to be in git (I7). And `hooks`
-is not config at all: see the security rule under *Extending ppr*.
+and `porcelain` are not config at all — not fields on `Config`, deleted from
+any merge that produced one, and unsettable at every scope: see the security
+rule under *Extending ppr*.
 
 ---
 
@@ -640,7 +683,9 @@ already does it. In order of how little they cost:
    edit by hand; the event arrives as JSON on stdin. `ppr plugins` shows what
    is wired, and `--dry-run` shows what would fire without firing it.
 3. **Rebinding a flag:** put your own `ppr-notify` or `ppr-reminders-push`
-   earlier on PATH.
+   earlier on PATH — or, when the tool needs arguments, name the command line
+   in `~/.config/ppr/config.json`:
+   `"porcelain": { "notify": "/opt/my-notifier --urgent" }`.
 4. **Settings:** `ppr config get plugins.<you>.<key>`, or read the JSON.
 
 A consumer prints nothing on stdout, exits 0 when the event was not its
@@ -669,7 +714,7 @@ new field is optional, and absence has a defined meaning.
 ## 8. Testing
 
 ```bash
-pnpm test        # 338 tests, plugins included. No network. No TTY required.
+pnpm test        # 422 tests, plugins included. No network. No TTY required.
 pnpm typecheck
 pnpm build
 ```
@@ -706,8 +751,10 @@ pnpm build
   listener with a bug in it cannot cost the user an entry.
 - `cli/test/hooks.test.js` — what a `hooks` block means. Whether a *vault* may
   declare one is an integration test, because it is a claim about a whole run.
-- `cli/test/porcelain.test.js` — what survives a notification, and whether a
-  reminder is allowed out of the vault.
+- `cli/test/porcelain.test.js` — what survives a notification, whether a
+  reminder is allowed out of the vault, what an intent resolves to and which
+  layer a binding was allowed to come from, and how a command line becomes argv
+  — including a hostile title arriving at a bound program as text.
 - `plugins/test/applescript.test.js` — the AppleScript a plugin would run, on a
   hostile string and a date, plus which events `ppr-reminders-push` is about and
   the `file://` note it writes (a vault path with a space in it is the hostile
@@ -984,8 +1031,12 @@ actually run the command you changed. Report what you verified and what you did 
   Anything two-way is worse: no reading back, no reconciling a tickbox somebody
   moved over there.
 - Do not add a plugin registry, a manifest, a lifecycle, or a versioned plugin
-  API. A name on PATH and JSON on a pipe is the whole contract, and it is the
-  reason there is nothing to keep compatible.
+  API. A name on PATH — or one string per intent in the user's own config — and
+  JSON on a pipe is the whole contract, and it is the reason there is nothing to
+  keep compatible. A binding is not a registry: nothing announces itself to ppr,
+  nothing is enumerated or discovered, and a command line somebody typed into
+  their own file has no schema to version and nothing on ppr's side to keep
+  working (I13).
 - Do not multiply event names. A new kind is a filter, not an event.
 - Do not add embeddings or a vector store to search. Lexical search needs no setup,
   works offline, and is instant on a personal vault. `ppr ask` is where semantics live.

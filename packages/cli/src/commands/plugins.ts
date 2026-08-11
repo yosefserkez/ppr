@@ -4,7 +4,16 @@ import { findVault, loadConfig } from '@ppr/core/node';
 import { globals } from '../context.js';
 import { commandProgram, resolveCommand, scanExternals } from '../external.js';
 import { loadHooks } from '../hooks.js';
-import { NOTIFY_PLUGIN, PUSH_PLUGIN } from '../porcelain.js';
+import {
+  loadPorcelain,
+  redactCommand,
+  resolveIntent,
+  strayIntents,
+  INTENTS,
+  NOTIFY_INTENT,
+  PUSH_INTENT,
+  type Porcelain,
+} from '../porcelain.js';
 import { color, json, out, table } from '../render.js';
 
 /**
@@ -38,7 +47,8 @@ export function pluginsCommand(): Command {
       `
 Read-only, and it runs no model. Everything it reports is a convention rather
 than a registration: a name on PATH, an event in ~/.config/ppr/config.json,
-and \`plugins.<name>.<key>\` for settings ppr never validates.
+\`porcelain.<intent>\` in the same file when a name on PATH is not enough, and
+\`plugins.<name>.<key>\` for settings ppr never validates.
 
   ppr hooks add entry.created ppr-reminders-push   wire an event
   ppr plugins --json                               the same thing, as data`,
@@ -50,7 +60,12 @@ and \`plugins.<name>.<key>\` for settings ppr never validates.
 
       const report = {
         events: eventRows(await loadHooks()),
-        intents: intentRows(),
+        intents: intentRows(await loadPorcelain()),
+        // A `porcelain` key ppr has no flag for. In the report because the
+        // whole question this command answers is "what is wired up", and a
+        // mistyped intent is wired to nothing while looking like nothing —
+        // never an error, because a typo must not break a command.
+        unknownIntents: await strayIntents(),
         commands: scanExternals().map((cmd) => ({ word: cmd.word, name: cmd.name, path: cmd.path })),
         settings: pluginSettings(config),
       };
@@ -63,12 +78,18 @@ and \`plugins.<name>.<key>\` for settings ppr never validates.
           ])
         : [['', color.dim('Nothing wired. `ppr hooks add <event> <command>`')]]);
 
-      section('Intents', report.intents.map((row): [string, string] => [
-        `${row.tool ? mark(row.path) : ' '} ${row.flag}`,
-        row.tool
-          ? `${row.tool}  ${color.dim(row.path ?? '(not on your PATH)')}`
-          : color.dim(row.resolves),
-      ]));
+      section('Intents', [
+        ...report.intents.map((row): [string, string] => [
+          `${row.tool ? mark(row.path) : ' '} ${row.flag}`,
+          row.tool ? `${row.tool}  ${color.dim(where(row))}` : color.dim(row.resolves),
+        ]),
+        // Named, and only named: the value is a command line and may be holding
+        // a credential (I7), and a key nobody can act on is not worth one.
+        ...report.unknownIntents.map((key): [string, string] => [
+          `${mark(null)} porcelain.${key}`,
+          color.dim(`no such intent — ppr has ${INTENTS.join(' and ')}`),
+        ]),
+      ]);
 
       section('Commands', report.commands.length
         ? report.commands.map((cmd): [string, string] => [
@@ -137,26 +158,66 @@ function eventRows(hooks: Record<string, string[]>): Array<{
   );
 }
 
+interface IntentRow {
+  flag: string;
+  /** The intent key, which is also `ppr-<intent>` minus the prefix. */
+  intent: string | null;
+  /** The command line that would run, or null for `--pipe`, which names its own. */
+  tool: string | null;
+  /** Set when a `porcelain.<intent>` answered instead of PATH. */
+  bound: string | null;
+  path: string | null;
+  resolves: string;
+}
+
 /**
  * What the friendly flags currently mean.
  *
- * A flag names an intent and a conventional program name on PATH resolves the
- * tool (I13), so "what does `--push` do" is answered by `which`, not by ppr —
- * and this is the only place a person can see that answer without knowing to
- * run `which`. `--pipe` is in the table with nothing resolved on purpose: it
- * is the same mechanism with the convention removed, and leaving it out would
- * suggest the two blessed names are the whole story.
+ * A flag names an intent, and either `porcelain.<intent>` in the user's config
+ * or `ppr-<intent>` on PATH resolves the tool (I13) — so "what does `--push`
+ * do" is answered by one config file and `which`, and this is the only place a
+ * person can see that answer without knowing to check both. A binding is shown
+ * as the command line it is, with the program at its front resolved exactly the
+ * way `eventRows` resolves a hook's: a report that named a program while a
+ * different one ran would be worse than no report.
+ *
+ * `--pipe` is in the table with nothing resolved on purpose: it is the same
+ * mechanism with the convention removed, and leaving it out would suggest the
+ * two blessed names are the whole story.
  */
-function intentRows(): Array<{ flag: string; tool: string | null; path: string | null; resolves: string }> {
-  const resolve = (flag: string, tool: string) => ({
-    flag,
-    tool,
-    path: resolveCommand(tool),
-    resolves: tool,
-  });
+function intentRows(porcelain: Porcelain): IntentRow[] {
+  const row = (flag: string, intent: string): IntentRow => {
+    const target = resolveIntent(intent, porcelain);
+    // Every field below is printed — in the table and in `--json` — and a
+    // binding is the config value most likely to hold a token, so the command
+    // line arrives redacted or it does not arrive (I7). It is the same rule
+    // `pluginSettings` above applies, wearing a command line's spelling rather
+    // than a config path's.
+    const shown = redactCommand(target.argv);
+    return {
+      flag,
+      intent,
+      tool: shown,
+      bound: target.bound ? shown : null,
+      path: target.path,
+      resolves: shown,
+    };
+  };
   return [
-    resolve('remind --push', PUSH_PLUGIN),
-    resolve('brief --notify', NOTIFY_PLUGIN),
-    { flag: 'schedule --pipe', tool: null, path: null, resolves: 'anything you name' },
+    row('remind --push', PUSH_INTENT),
+    row('brief --notify', NOTIFY_INTENT),
+    { flag: 'schedule --pipe', intent: null, tool: null, bound: null, path: null, resolves: 'anything you name' },
   ];
 }
+
+/**
+ * Where the thing that runs came from, in the width of a table cell.
+ *
+ * A binding says so out loud: the reason somebody is reading this is that
+ * `--notify` did something they did not expect, and "it came from
+ * porcelain.notify" is the answer to that in four words.
+ */
+const where = (row: IntentRow): string =>
+  row.bound
+    ? `porcelain.${row.intent} → ${row.path ?? 'not found'}`
+    : (row.path ?? '(not on your PATH)');

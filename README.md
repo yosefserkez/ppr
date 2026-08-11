@@ -192,11 +192,33 @@ ppr remind tomorrow call the dentist --push
 ppr config set remind.push true   # every reminder, quoted ones included
 ```
 
-The flag names what you want; a program on your `PATH` decides how it happens.
+The flag names what you want; a program outside ppr decides how it happens.
 `--notify` runs `ppr-notify` and `--push` runs `ppr-reminders-push` — both
 installed alongside ppr, both about forty lines, and both replaceable. Put your
 own `ppr-reminders-push` earlier on `PATH` and `--push` means Todoist, with
 nothing to configure and no ppr release involved.
+
+That is the default, and it stays the cheap case because it needs no config at
+all. The one sentence a name cannot say is "`--notify` means `/opt/my-notifier
+--urgent`": a name takes no arguments, so the only way to add one is a wrapper
+script called exactly `ppr-notify` that also wins `PATH` order — a lot of
+ceremony for one extra word. So a line in your own config says it instead:
+
+```jsonc
+// ~/.config/ppr/config.json
+{ "porcelain": { "notify": "/opt/my-notifier --urgent",
+                 "reminders-push": "todoist-add --project Inbox" } }
+```
+
+Reach for a binding when you want arguments, or an absolute path, without
+writing a wrapper and winning `PATH` order; otherwise a name is less to keep
+track of. It is read from that file and never from a vault's, for the same
+reason hooks are — a vault is a repo people clone, and this names a program to
+run. What is bound is a command line and not a shell line: arguments and quoted
+words work, a `|` is just an argument, and a pipeline means writing a script and
+binding that — which is what `$EDITOR` has always asked for too, where
+`EDITOR="code --wait"` works. `ppr plugins` says which of the two is answering
+right now.
 
 A pushed reminder's note carries a `file://` link to the markdown itself, so
 tapping it in Reminders opens the entry. The file is the link; there is no
@@ -485,9 +507,17 @@ config for the scheduler your machine already has, and prints the crontab line
 if it cannot install one.
 
 A scheduled `brief` with nowhere to go writes into a log nobody reads, so the
-useful half is delivery — and delivery is a pipe. `--notify` is shorthand for
-`--pipe ppr-notify`; anything else you can type on a command line works too,
-and ppr does not need to know what is on the other end of it.
+useful half is delivery. `--notify` on a scheduled `brief` is not a pipe: what
+gets installed is `ppr brief --plain --notify`, so the job announces itself and
+the `notify` intent is resolved at 8am by the ppr that runs — rebind
+`porcelain.notify` tomorrow and tomorrow's banner follows, with no job to add
+again. That also keeps a binding out of the scheduler's shell, which is the
+point: a `|` in one is an argument everywhere or a pipe nowhere.
+
+`memory learn` has no `--notify` of its own, so there `--notify` still means
+`--pipe ppr-notify` — the conventional name, looked up at 3am, never a binding.
+And `--pipe` takes anything you can type on a command line, because ppr does not
+need to know what is on the other end of it.
 
 Only `learn` needs a model. `ppr ai test` sends one prompt end to end and says
 whether yours answers — and whether it answers in JSON, which is what every ppr
@@ -697,16 +727,20 @@ ppr hooks add learn.finished "jq '.learned | length' | logger -t ppr"
 ppr hooks                          # what is wired to what
 ```
 
-That writes the file you can equally well edit by hand — there is nothing else
-to it, and nothing gets registered anywhere:
+That writes the `hooks` half of a file you can equally well edit by hand — there
+is nothing else to it, and nothing gets registered anywhere:
 
 ```jsonc
 // ~/.config/ppr/config.json — and only here, never <vault>/.ppr/config.json,
-// because a vault is a repo people clone and hooks run shell commands.
+// because a vault is a repo people clone and everything in these two blocks
+// names a program ppr will run.
 {
   "hooks": {
     "entry.created": ["ppr-reminders-push"],
     "learn.finished": ["jq '.learned | length' | logger -t ppr"]
+  },
+  "porcelain": {
+    "notify": "/opt/my-notifier --urgent"
   }
 }
 ```
@@ -715,6 +749,12 @@ A hook may write to a vault, and its write happens — but it announces nothing,
 so ppr fans out once, from the command you ran. Otherwise a hook that logs a
 copy somewhere is a new process per entry, forever. If yours wants a second
 thing to happen, it runs it itself.
+
+**A binding** is the other half of that file: one command line per intent, for
+when `--notify` or `--push` should mean something a bare name on `PATH` cannot
+say — `/opt/my-notifier --urgent`, arguments and all. Nothing writes it for you;
+`ppr config set porcelain.…` refuses at every scope and names the file, because
+hand-editing it is the whole interface.
 
 **A** `ppr-foo` **on your** `PATH` is a subcommand, the way `git-foo` is:
 
@@ -725,10 +765,10 @@ ppr recap --since 1d --style standup | pbcopy
 ```
 
 `ppr plugins` shows the whole wiring diagram: which commands are listening
-to which events, what `--push` and `--notify` currently resolve to on your
-`PATH`, every `ppr-*` you have installed, and which `plugins.<name>` settings
-are set. Nothing is stored — it is computed from your machine each time, so it
-cannot drift from the truth.
+to which events, what `--push` and `--notify` currently resolve to and whether a
+binding or `PATH` answered, every `ppr-*` you have installed, and which
+`plugins.<name>` settings are set. Nothing is stored — it is computed from your
+machine each time, so it cannot drift from the truth.
 
 `--dry-run` is how you check a wiring change without triggering it:
 

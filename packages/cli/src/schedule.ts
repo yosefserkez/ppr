@@ -23,15 +23,20 @@ export const JOBS = {
     args: ['memory', 'learn', '--quiet'],
     description: 'fold new entries into what ppr knows',
     defaultAt: '03:00',
+    /** `memory learn` has no `--notify`, so a banner there is a pipe. */
+    announces: false,
   },
   brief: {
     // Plain, because delivery is not this command's business. A scheduled
     // brief with nowhere to go writes into a launchd log at 8am where nobody
-    // is looking — and the answer to that is a pipe, which is what `--pipe`
-    // (or its `--notify` spelling) adds.
+    // is looking — and the answers to that are a pipe (`--pipe`), or the
+    // `--notify` this command already has, which goes *into* the argv rather
+    // than wrapping a pipeline round it (see `jobArgv`).
     args: ['brief', '--plain'],
     description: 'what is coming up',
     defaultAt: '08:00',
+    /** `ppr brief --notify` announces itself: no pipeline, no shell. */
+    announces: true,
   },
 } as const;
 
@@ -55,6 +60,13 @@ export interface Schedule {
    * neither.
    */
   pipe?: string;
+  /**
+   * Whether the job announces its own result — `--notify` on the scheduled
+   * command line, not a pipe into something that notifies.
+   *
+   * Only meaningful for a job whose command has the flag (`JOBS[job].announces`).
+   */
+  notify?: boolean;
 }
 
 /** `08:00` -> `{hour: 8, minute: 0}`. Throws nothing; returns null instead. */
@@ -81,6 +93,18 @@ export const agentPath = (job: JobName): string =>
  * just as bare, so a Homebrew, nvm, or volta node is simply not there — the
  * job dies at 3am with "env: node: No such file or directory" in a log nobody
  * reads (L22). Naming the interpreter removes the lookup entirely.
+ *
+ * `--notify` rides here, on the end of the job's own argv, and that placement
+ * is the whole of it: what the intent means is then resolved at 8am, by the
+ * ppr that runs, through the one `resolveIntent` path — as argv, with no shell
+ * anywhere and nothing about it written down. Resolving it at install time and
+ * piping into the answer would break that twice over. A `porcelain` binding is
+ * a *command line*, so splicing one into the `/bin/sh -c` that `shellCommand`
+ * builds would make a `|` or a `$HOME` in it shell source at 8am when it is an
+ * argument at the terminal — the one thing `porcelain.ts` calls
+ * non-negotiable. And it would freeze today's binding into the plist, so
+ * editing it tomorrow would leave the job running yesterday's while
+ * `ppr plugins` reported the new one.
  */
 export function jobArgv(schedule: Schedule, node: string, script: string): string[] {
   return [
@@ -88,6 +112,7 @@ export function jobArgv(schedule: Schedule, node: string, script: string): strin
     script,
     ...(schedule.vault ? ['--vault', schedule.vault] : []),
     ...JOBS[schedule.job].args,
+    ...(schedule.notify ? ['--notify'] : []),
   ];
 }
 
