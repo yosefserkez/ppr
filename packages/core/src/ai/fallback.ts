@@ -4,6 +4,7 @@ import { gapWords, threadGaps } from '../thread.js';
 import { countdown, dayKey, formatDay } from '../util/time.js';
 import { extractTags, plainText, titleFromBody, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
+import { byCreatedAsc } from '../util/order.js';
 
 /**
  * Verbal scaffolding that carries no information once it is written down.
@@ -101,7 +102,7 @@ export function heuristicRecap(entries: Entry[]): string {
  */
 export function heuristicThread(entries: Entry[], facts: Entry[] = []): string {
   if (!entries.length) return 'No thread here.';
-  const ordered = [...entries].sort((a, b) => (a.created < b.created ? -1 : 1));
+  const ordered = [...entries].sort(byCreatedAsc);
   const gaps = new Map(threadGaps(ordered).map((g) => [g.before, g.days]));
 
   const lines: string[] = [];

@@ -28,6 +28,7 @@ import { MEMORY_KIND, type Entry } from './types.js';
 import { backlinks, forwardLinks, related } from './links.js';
 import { toFact, type Fact } from './memory.js';
 import { searchEntries } from './search.js';
+import { byCreatedAsc } from './util/order.js';
 
 /** Why an entry is on the thread. */
 export type ThreadReason =
@@ -144,18 +145,8 @@ export function walkThread(pool: Entry[], seeds: ThreadMember[]): ThreadMember[]
     frontier = next;
   }
 
-  return [...found.values()].sort(byTime);
+  return [...found.values()].sort((a, b) => byCreatedAsc(a.entry, b.entry));
 }
-
-/** Oldest first, ties on id — monotonic, so the order is the same every run (L2). */
-const byTime = (a: ThreadMember, b: ThreadMember): number =>
-  a.entry.created === b.entry.created
-    ? a.entry.id < b.entry.id
-      ? -1
-      : 1
-    : a.entry.created < b.entry.created
-      ? -1
-      : 1;
 
 /** Everything one step from a node, links first so a link never loses to a tag. */
 function neighbours(pool: Entry[], node: ThreadMember): ThreadMember[] {
@@ -211,7 +202,7 @@ export function threadFacts(all: Entry[], members: ThreadMember[]): ThreadFact[]
     const from = fact.from.filter((id) => ids.has(id));
     if (from.length) out.push({ fact, from });
   }
-  return out.sort((a, b) => (a.fact.entry.created < b.fact.entry.created ? -1 : 1));
+  return out.sort((a, b) => byCreatedAsc(a.fact.entry, b.fact.entry));
 }
 
 /** The shortest silence anybody would call putting something down. */
@@ -238,7 +229,7 @@ const GAP_FACTOR = 6;
  * time as the model's story does.
  */
 export function threadGaps(entries: Entry[]): ThreadGap[] {
-  const ordered = [...entries].sort((a, b) => (a.created < b.created ? -1 : 1));
+  const ordered = [...entries].sort(byCreatedAsc);
   if (ordered.length < 3) return [];
 
   const spans: number[] = [];

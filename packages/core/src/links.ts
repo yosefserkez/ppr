@@ -1,4 +1,5 @@
 import type { Entry } from './types.js';
+import { byCreatedDesc } from './util/order.js';
 import { extractLinks, slugify } from './util/text.js';
 
 /** Every name an entry answers to when written as `[[...]]`. */
@@ -87,7 +88,7 @@ export function related(entries: Entry[], entry: Entry, limit = 5): Related[] {
     if (score > 0) out.push({ entry: other, score, reasons });
   }
 
-  out.sort((a, b) => b.score - a.score || (a.entry.created < b.entry.created ? 1 : -1));
+  out.sort((a, b) => b.score - a.score || byCreatedDesc(a.entry, b.entry));
   return out.slice(0, limit);
 }
 

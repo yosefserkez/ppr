@@ -4,6 +4,7 @@ import { PprError } from '../errors.js';
 import { factKey, factText, parseFactDate, type FactRecurrence } from '../memory.js';
 import { plainText, truncate } from '../util/text.js';
 import { shortId } from '../util/id.js';
+import { byCreatedAsc } from '../util/order.js';
 import { countdown, dayKey, formatDay } from '../util/time.js';
 import { asStringList, parseJsonLoose } from './json.js';
 import {
@@ -753,7 +754,7 @@ export async function brief(
  */
 function transcript(entries: Entry[], perEntryChars = 1200, opts: { year?: boolean } = {}): string {
   return [...entries]
-    .sort((a, b) => (a.created < b.created ? -1 : 1))
+    .sort(byCreatedAsc)
     .map((e) => {
       const date = new Date(e.created);
       const when = opts.year ? `${formatDay(date)} ${date.getFullYear()}` : formatDay(date);
