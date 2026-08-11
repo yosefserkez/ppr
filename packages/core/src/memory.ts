@@ -168,7 +168,7 @@ export function parseFactDate(value: unknown): string | undefined {
         ? value.trim().slice(0, 10)
         : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
-  const [y, m, d] = raw.split('-').map(Number) as [number, number, number];
+  const [, m, d] = raw.split('-').map(Number) as [number, number, number];
   if (m < 1 || m > 12 || d < 1 || d > 31) return undefined;
   return raw;
 }
@@ -237,6 +237,31 @@ export function factTerms(text: string): string[] {
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
+ * One compiled whole-word matcher per distinctive term, kept between calls.
+ *
+ * `mentionScore` is called once per entry per occurrence, so recompiling the
+ * same handful of terms for every entry in the vault is most of what a brief
+ * spends its time on. The cache is keyed on the *term*, not on the
+ * `DatedItem`: an item is rebuilt from its entry by `toFact`/`toDated` on
+ * every read, so a cache hung off the object would never hit. It stays small
+ * for the same reason the whole fact store fits in a prompt — the keys are the
+ * distinctive words of one vault's dated things.
+ *
+ * Sharing a `RegExp` is only safe because these carry no flags: `test` reads
+ * and advances `lastIndex` only on a `g` or `y` pattern, so there is no state
+ * here to leak from one call into the next.
+ */
+const wholeWordMatchers = new Map<string, RegExp>();
+
+function wholeWord(term: string): RegExp {
+  const hit = wholeWordMatchers.get(term);
+  if (hit) return hit;
+  const matcher = new RegExp(`\\b${escapeRegExp(term)}\\b`);
+  wholeWordMatchers.set(term, matcher);
+  return matcher;
+}
+
+/**
  * How strongly a piece of text is about a fact: the number of its distinctive
  * words that appear, as whole words.
  *
@@ -246,9 +271,7 @@ const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\
  */
 export function mentionScore(text: string, item: DatedItem): number {
   const haystack = text.toLowerCase();
-  return factTerms(item.text).filter((term) =>
-    new RegExp(`\\b${escapeRegExp(term)}\\b`).test(haystack),
-  ).length;
+  return factTerms(item.text).filter((term) => wholeWord(term).test(haystack)).length;
 }
 
 export interface Occurrence {
