@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { spawnEditorOn } from '../input.js';
 import type { Entry, Vault } from '@ppr/core';
-import { shortId } from '@ppr/core';
+import { PprError, shortId } from '@ppr/core';
 import { which } from '@ppr/core/node';
 import { Screen } from './screen.js';
 import { render } from './layout.js';
@@ -83,6 +83,14 @@ export class Browser {
         this.finish?.();
         return;
       }
+      this.paint();
+    } catch (error) {
+      // Nobody awaits this promise, so an escaping rejection ends the process
+      // with the alternate screen still up — the terminal is not handed back
+      // (I5) and the failure is never seen. The footer is the only place that
+      // can say so from in here: writing to stderr would land on the alt
+      // screen (I10).
+      this.status(error instanceof PprError ? error.message : 'could not do that');
       this.paint();
     } finally {
       this.busy = false;
