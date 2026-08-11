@@ -25,7 +25,7 @@
  */
 
 import { MEMORY_KIND, type Entry } from './types.js';
-import { backlinks, forwardLinks, related } from './links.js';
+import { LinkIndex } from './links.js';
 import { toFact, type Fact } from './memory.js';
 import { searchEntries } from './search.js';
 import { byCreatedAsc } from './util/order.js';
@@ -119,8 +119,14 @@ const SEED_FLOOR = 0.25;
  * `pool` is the entries that are allowed on it — facts are excluded by the
  * caller, because a fact is state rather than a moment and has no place in a
  * timeline (I12). It reaches the thread through `threadFacts` instead.
+ *
+ * An already-built `LinkIndex` may be passed instead of the entries, and must
+ * have been built over exactly that pool: the walk asks the same questions of
+ * the graph at every node, and one index over the wrong entries would quietly
+ * admit things the pool was filtered to keep out.
  */
-export function walkThread(pool: Entry[], seeds: ThreadMember[]): ThreadMember[] {
+export function walkThread(pool: Entry[] | LinkIndex, seeds: ThreadMember[]): ThreadMember[] {
+  const index = pool instanceof LinkIndex ? pool : new LinkIndex(pool);
   const found = new Map<string, ThreadMember>();
   for (const seed of seeds) {
     const seen = found.get(seed.entry.id);
@@ -131,7 +137,7 @@ export function walkThread(pool: Entry[], seeds: ThreadMember[]): ThreadMember[]
   while (frontier.length) {
     const next: ThreadMember[] = [];
     for (const node of frontier) {
-      for (const candidate of neighbours(pool, node)) {
+      for (const candidate of neighbours(index, node)) {
         if (candidate.strength < ADMIT) continue;
         const seen = found.get(candidate.entry.id);
         // A better route to somewhere already on the thread replaces the
@@ -149,13 +155,13 @@ export function walkThread(pool: Entry[], seeds: ThreadMember[]): ThreadMember[]
 }
 
 /** Everything one step from a node, links first so a link never loses to a tag. */
-function neighbours(pool: Entry[], node: ThreadMember): ThreadMember[] {
+function neighbours(index: LinkIndex, node: ThreadMember): ThreadMember[] {
   const out: ThreadMember[] = [];
   const linked = new Set<string>();
 
   for (const entry of [
-    ...forwardLinks(pool, node.entry).resolved,
-    ...backlinks(pool, node.entry),
+    ...index.forwardLinks(node.entry).resolved,
+    ...index.backlinks(node.entry),
   ]) {
     if (linked.has(entry.id)) continue;
     linked.add(entry.id);
@@ -169,7 +175,7 @@ function neighbours(pool: Entry[], node: ThreadMember): ThreadMember[] {
     });
   }
 
-  for (const hit of related(pool, node.entry, RELATED_FANOUT)) {
+  for (const hit of index.related(node.entry, RELATED_FANOUT)) {
     if (hit.score < RELATED_MIN || linked.has(hit.entry.id)) continue;
     out.push({
       entry: hit.entry,
@@ -299,12 +305,15 @@ const NUDGE_RELATED_MIN = 8;
  * with the command it names would be worse than saying nothing.
  */
 export function continuesThread(pool: Entry[], entry: Entry): number | null {
+  // One index for both questions: the cheap one is the walk's first step, so
+  // building it twice over the same pool would be building it twice.
+  const index = new LinkIndex(pool);
   const seed = seedMember(entry, 'seed');
-  const tied = neighbours(pool, seed).some(
+  const tied = neighbours(index, seed).some(
     (m) => m.reason === 'linked' || m.score >= NUDGE_RELATED_MIN,
   );
   if (!tied) return null;
-  const thread = walkThread(pool, [seed]);
+  const thread = walkThread(index, [seed]);
   return thread.length >= 3 ? thread.length : null;
 }
 
