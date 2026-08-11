@@ -33,12 +33,15 @@ export function filterEntries(entries: Entry[], query: ListQuery = {}): Entry[] 
   return query.limit ? out.slice(offset, offset + query.limit) : out.slice(offset);
 }
 
-const tokenize = (s: string): string[] =>
+// `min` is 2 when searching, where a stray "a" or "is" only adds noise to a
+// query somebody finished typing, and 1 when filtering, where the first letter
+// typed is the entire query and dropping it would blank the pane.
+const tokenize = (s: string, min = 2): string[] =>
   s
     .toLowerCase()
     .split(/[^a-z0-9#/_'-]+/i)
     .map((t) => t.replace(/^[#'-]+|['-]+$/g, ''))
-    .filter((t) => t.length > 1);
+    .filter((t) => t.length >= min);
 
 const countOccurrences = (haystack: string, needle: string): number => {
   let count = 0;
@@ -53,6 +56,22 @@ const countOccurrences = (haystack: string, needle: string): number => {
 const RECENCY_HALF_LIFE_DAYS = 90;
 
 /**
+ * What the caller is doing, which decides what counts as a match.
+ *
+ * `search` answers a question about the corpus: recall first, so one token of
+ * several is enough to be listed and the ranking sorts the rest out.
+ * `filter` is a box somebody is typing into, and a box has to narrow — every
+ * token must match, or adding a word makes the list *longer*, and the first
+ * character has to narrow already or the pane blanks on every keystroke.
+ *
+ * They are two modes rather than two functions on purpose: a second matcher is
+ * a matcher that drifts (see the DRY note in AGENTS.md), and `ppr search redis`
+ * and `/redis` in the browser have to keep agreeing about what a match is and
+ * what order matches arrive in.
+ */
+export type SearchMode = 'search' | 'filter';
+
+/**
  * Lexical search with field weighting and a gentle recency tilt.
  *
  * Deliberately not embeddings: it needs zero setup, works offline, is instant
@@ -61,11 +80,12 @@ const RECENCY_HALF_LIFE_DAYS = 90;
 export function searchEntries(
   entries: Entry[],
   rawQuery: string,
-  opts: { limit?: number; now?: Date } = {},
+  opts: { limit?: number; now?: Date; mode?: SearchMode } = {},
 ): SearchHit[] {
   const query = rawQuery.trim().toLowerCase();
   if (!query) return [];
-  const tokens = tokenize(query);
+  const filtering = opts.mode === 'filter';
+  const tokens = tokenize(query, filtering ? 1 : 2);
   if (!tokens.length) return [];
   const now = opts.now ?? new Date();
 
@@ -88,6 +108,7 @@ export function searchEntries(
       score += tokenScore;
     }
     if (!matched) continue;
+    if (filtering && matched < tokens.length) continue;
 
     // Every token present beats a partial match, always.
     if (matched === tokens.length) score *= 2;

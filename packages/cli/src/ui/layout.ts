@@ -129,10 +129,16 @@ export function render(state: BrowserState, size: Size, now: Date): string[] {
 function renderHeader(state: BrowserState, width: number): string[] {
   const view = currentView(state);
   const total = visibleEntries(view).length;
-  const crumbs = state.stack.map((v) => v.label).join(color.dim(' › '));
   const position = total ? `${view.cursor + 1}/${total}` : '0';
 
-  const left: Segment[] = [['ppr ', color.dim], [crumbs]];
+  // The separator is a segment rather than a pre-coloured join: `row()` measures
+  // `text.length`, so a crumb string carrying escape codes clips early and can
+  // cut a sequence in half (L3).
+  const left: Segment[] = [['ppr ', color.dim]];
+  for (const [i, v] of state.stack.entries()) {
+    if (i) left.push([' › ', color.dim]);
+    left.push([v.label]);
+  }
   if (view.filter) left.push([`  /${view.filter}`, color.yellow]);
   const line = row(left, Math.max(0, width - position.length - 1));
   return [`${line} ${color.dim(position)}`, color.dim('─'.repeat(width))];

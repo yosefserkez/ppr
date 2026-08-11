@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { searchEntries } from '@ppr/core';
 import {
   createState,
   currentView,
@@ -82,7 +83,9 @@ test('filtering narrows the list and resets the cursor', () => {
   state = drive(state, [key('r', { char: 'r' }), key('e', { char: 'e' }), key('d', { char: 'd' })]).state;
   assert.equal(visibleEntries(currentView(state)).length, 2);
   assert.equal(currentView(state).cursor, 0, 'cursor returns to the top of the new list');
-  assert.equal(focused(state).title, 'redis migration');
+  // The filter ranks rather than preserving list order; these two score the
+  // same, so the tiebreak on id decides, exactly as `ppr search` would.
+  assert.equal(focused(state).title, 'redis latency');
 
   state = drive(state, ['backspace', 'backspace', 'backspace']).state;
   assert.equal(visibleEntries(currentView(state)).length, 3);
@@ -232,4 +235,144 @@ test('reloading clamps a cursor that is now past the end', () => {
   const reloaded = restack(state, new Map(survivors.map((e) => [e.id, e])), survivors);
   assert.equal(currentView(reloaded).cursor, 1);
   assert.ok(focused(reloaded), 'something is still focused');
+});
+
+test('g goes to the first entry and shift-G to the last', () => {
+  const start = createState('all', many(6), 10);
+
+  const end = drive(start, [key('g', { char: 'G', shift: true })]).state;
+  assert.equal(currentView(end).cursor, 5, 'shift-G reaches the last entry');
+
+  const top = drive(end, [key('g', { char: 'g' })]).state;
+  assert.equal(currentView(top).cursor, 0, 'plain g still goes to the first');
+});
+
+test('reloading a shrunken list never leaves the window past the end', () => {
+  const entries = many(10);
+  let state = createState('all', entries, 3);
+  state = drive(state, ['end']).state;
+  assert.ok(currentView(state).offset > 0, 'the list is scrolled before the reload');
+
+  const survivors = entries.slice(0, 4);
+  const reloaded = restack(state, new Map(survivors.map((e) => [e.id, e])), survivors);
+  const view = currentView(reloaded);
+
+  assert.equal(view.cursor, 3, 'the cursor lands on the last surviving entry');
+  assert.ok(
+    view.offset <= view.cursor && view.cursor < view.offset + 3,
+    'the cursor is inside the window the shell will draw',
+  );
+  assert.equal(view.entries.slice(view.offset, view.offset + 3).length, 3, 'the window has rows in it');
+});
+
+test('the header fits the terminal however deep the breadcrumb is', async () => {
+  // Colour is what this bug was made of, so it has to be on: force it before
+  // layout.js — and through it picocolors — is first loaded in this process.
+  process.env.FORCE_COLOR = '1';
+  delete process.env.NO_COLOR;
+  const { render } = await import('../dist/ui/layout.js');
+  const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+  let state = createState('stack-01', many(3), 10);
+  for (const label of ['stack-02', 'stack-03', 'stack-04', 'stack-05']) {
+    state = push(state, label, many(3));
+  }
+
+  const columns = 60;
+  const [header] = render(state, { columns, rows: 20 }, new Date('2026-07-27T12:00:00-07:00'));
+
+  const count = (re) => (header.match(re) ?? []).length;
+
+  assert.ok(header.includes('\x1b['), 'colour is on, or this test proves nothing');
+  assert.equal(strip(header).length, columns, 'the header fills the width exactly');
+  assert.equal(header.match(/\x1b(?!\[[0-9;]*m)/), null, 'no escape sequence was cut in half');
+  assert.equal(count(/\x1b\[2m/g), count(/\x1b\[22m/g), 'every dim it opens, it closes — a clipped one sticks');
+});
+
+test('the browse filter finds exactly what search would have found', () => {
+  const entries = [
+    entry('a', 'redis migration', { body: 'moving the cache off redis' }),
+    entry('b', 'lunch plans'),
+    entry('c', 'redis latency', { tags: ['redis'] }),
+    entry('d', 'cache warmup', { body: 'the redis warmup script' }),
+  ];
+  const view = { label: 'all', entries, cursor: 0, offset: 0, filter: 'redis' };
+
+  const expected = searchEntries(entries, 'redis', { mode: 'filter' }).map((hit) => hit.entry.id);
+  assert.equal(expected.length, 3, 'the one entry that never says redis is out');
+  assert.deepEqual(visibleEntries(view).map((e) => e.id), expected, 'same set, same order');
+  // One token is where the two modes provably coincide — "every token matched"
+  // and "some token matched" are the same sentence about a single word — so the
+  // browser is pinned to what `ppr search redis` prints, order included. That
+  // is the coupling worth having: one matcher, and no way for it to drift.
+  assert.deepEqual(
+    searchEntries(entries, 'redis').map((hit) => hit.entry.id),
+    expected,
+    'and it is the same answer `ppr search redis` gives',
+  );
+});
+
+test('a filter only ever narrows as you type', () => {
+  const entries = [
+    entry('a', 'redis notes'),
+    entry('b', 'lunch plans', { body: 'plans for the migration' }),
+    entry('c', 'redis migration', { body: 'moving the cache off redis' }),
+  ];
+  const visible = (filter) =>
+    visibleEntries({ label: 'all', entries, cursor: 0, offset: 0, filter }).map((e) => e.id);
+
+  // Every prefix of a typed query, in order: each one shows a subset of what
+  // the keystroke before it showed. A box that widens as you add a word is not
+  // a filter, and ranked search on its own widens — one token of two is enough
+  // to be listed there.
+  const typed = 'redis migration';
+  let previous = entries.map((e) => e.id);
+  for (let i = 1; i <= typed.length; i++) {
+    const prefix = typed.slice(0, i);
+    const shown = visible(prefix);
+    assert.ok(
+      shown.every((id) => previous.includes(id)),
+      `"${prefix}" showed something "${typed.slice(0, i - 1)}" did not`,
+    );
+    previous = shown;
+  }
+
+  assert.equal(visible('redis').length, 2, 'the migration note that never says redis is out');
+  assert.deepEqual(visible('redis migration'), [entries[2].id], 'both words, or it does not show');
+  // The other mode really does widen here — which is why there are two of them
+  // rather than one that quietly does the wrong job in the browser.
+  assert.equal(searchEntries(entries, 'redis migration').length, 3);
+});
+
+test('the first character of a filter narrows instead of blanking the pane', () => {
+  const entries = [
+    entry('a', 'redis notes'),
+    entry('b', 'lunch plans'),
+    entry('c', 'c++ template madness'),
+  ];
+  const visible = (filter) =>
+    visibleEntries({ label: 'all', entries, cursor: 0, offset: 0, filter }).map((e) => e.title);
+
+  // Search drops one-letter tokens as noise; a filter box cannot, or the pane
+  // goes empty on the first keystroke of every search and `e`/`x`/`return`
+  // have nothing focused to act on until a second letter arrives.
+  assert.deepEqual(visible('r'), ['redis notes']);
+  assert.deepEqual(visible('re'), ['redis notes'], 'and the second letter does not change its mind');
+
+  // Punctuation the tokenizer does not keep must not blank the list either.
+  assert.ok(visible('c++').includes('c++ template madness'));
+});
+
+test('a filtered list drops what was deleted, not what it cached', () => {
+  const entries = [entry('a', 'redis migration'), entry('b', 'lunch plans'), entry('c', 'redis latency')];
+  let state = createState('all', entries, 10);
+  state = drive(state, ['/', ...'redis'.split('').map((c) => key(c, { char: c })), 'return']).state;
+  assert.equal(visibleEntries(currentView(state)).length, 2);
+
+  const survivors = entries.filter((e) => e.title !== 'redis latency');
+  const reloaded = restack(state, new Map(survivors.map((e) => [e.id, e])), survivors);
+  const visible = visibleEntries(currentView(reloaded));
+
+  assert.equal(visible.length, 1, 'the entry that went away is gone, though the filter never changed');
+  assert.equal(visible[0].title, 'redis migration');
 });

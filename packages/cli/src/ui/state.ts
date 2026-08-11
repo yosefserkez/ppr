@@ -1,5 +1,5 @@
 import type { Entry } from '@ppr/core';
-import { plainText } from '@ppr/core';
+import { searchEntries } from '@ppr/core';
 import type { Key } from './key.js';
 
 /**
@@ -69,14 +69,39 @@ export function createState(label: string, entries: Entry[], pageSize = 20): Bro
 
 export const currentView = (state: BrowserState): View => state.stack[state.stack.length - 1]!;
 
-/** The entries actually on screen: the view's list, narrowed by its filter. */
+/**
+ * Memoised answers, keyed by the view object that asked.
+ *
+ * Ranking a list is not free and one frame asks four times — cursor maths, the
+ * list pane, the header count — so the answer is cached rather than recomputed
+ * per call. The cache re-checks `filter` *and* the entries array it was built
+ * from, because a delete or a reload replaces the list while leaving the filter
+ * alone: keying on the filter only would show the entry you just removed.
+ */
+const visibleCache = new WeakMap<View, { filter: string; entries: Entry[]; result: Entry[] }>();
+
+/**
+ * The entries actually on screen: the view's list, narrowed by its filter.
+ *
+ * The filter is the vault's own matcher, so what `/` shows and what
+ * `ppr search` prints are one behaviour instead of two that drift — including
+ * the order, which is by relevance rather than by position in the list. It asks
+ * for the matcher's `filter` mode because a box being typed into has to narrow
+ * with every character: search's recall-first rules made `/r` show nothing and
+ * a second word show *more*.
+ */
 export function visibleEntries(view: View): Entry[] {
-  const needle = view.filter.trim().toLowerCase();
+  const needle = view.filter.trim();
   if (!needle) return view.entries;
-  return view.entries.filter((entry) => {
-    const haystack = `${entry.title} ${entry.tags.join(' ')} ${plainText(entry.body)}`.toLowerCase();
-    return needle.split(/\s+/).every((token) => haystack.includes(token));
-  });
+
+  const cached = visibleCache.get(view);
+  if (cached && cached.filter === needle && cached.entries === view.entries) return cached.result;
+
+  // `now` is left to default: the reducer is pure and has no clock, and the
+  // recency tilt only ever nudges the order of an already-matching list.
+  const result = searchEntries(view.entries, needle, { mode: 'filter' }).map((hit) => hit.entry);
+  visibleCache.set(view, { filter: needle, entries: view.entries, result });
+  return result;
 }
 
 export function focused(state: BrowserState): Entry | undefined {
@@ -181,7 +206,9 @@ function reduceList(
       return step(move(state, page));
     case key.name === 'pageup' || (key.ctrl && key.name === 'u'):
       return step(move(state, -page));
-    case key.name === 'home' || key.name === 'g':
+    // Shift-G arrives as a shifted `g`, so plain `g` has to say it is unshifted
+    // or it answers for both and the jump-to-last key is unreachable.
+    case key.name === 'home' || (!key.shift && key.name === 'g'):
       return step(jump(state, 0));
     case key.name === 'end' || (key.shift && key.name === 'g'):
       return step(jump(state, Number.MAX_SAFE_INTEGER));
@@ -346,8 +373,10 @@ function reducePrompt(state: BrowserState, key: Key, mode: Extract<Mode, { kind:
 export function restack(state: BrowserState, byId: Map<string, Entry>, rootEntries: Entry[]): BrowserState {
   const stack = state.stack.map((view, i) => {
     const entries = i === 0 ? rootEntries : view.entries.map((e) => byId.get(e.id)).filter(Boolean as unknown as (e: Entry | undefined) => e is Entry);
-    const cursor = Math.min(view.cursor, Math.max(0, entries.length - 1));
-    return { ...view, entries, cursor };
+    // The window has to move with the cursor: a shorter list left the offset
+    // where it was, so the pane sliced past the end and drew blank rows under a
+    // cursor that was still live.
+    return reposition({ ...view, entries }, state.pageSize, view.cursor);
   });
   return { ...state, stack };
 }
