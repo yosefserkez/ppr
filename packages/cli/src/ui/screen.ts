@@ -93,11 +93,15 @@ export class Screen {
     this.stdout.write(CURSOR_SHOW + ALT_SCREEN_OFF);
     this.keyboard.stop();
     this.stdout.off('resize', this.handleResize);
+    // Symmetric with `enter()`, because `suspend()` leaves and re-enters on
+    // every editor round-trip: an exit handler only ever removed by `close()`
+    // accumulates one listener per edit, and Node's warning about that is
+    // printed straight into the frame.
+    process.off('exit', this.handleExit);
   }
 
   close(): void {
     this.leave();
-    process.off('exit', this.handleExit);
   }
 }
 
